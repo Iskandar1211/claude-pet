@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "pet": { "command": "bun", "args": ["./pet-channel.ts"] }
+  }
+}

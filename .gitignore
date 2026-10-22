@@ -1,0 +1,5 @@
+node_modules/
+bridge/target/
+app/.build/
+app/build/
+/~/
