@@ -21,5 +21,10 @@
 	<!-- Без значка в Dock и без меню приложения: только значок в строке меню. -->
 	<key>LSUIElement</key>
 	<true/>
+	<!-- Голосовой ввод в Quick Chat (VoiceInput.swift): без этих ключей macOS завершает приложение при первом обращении. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Чтобы диктовать сообщения Claude в чате питомца.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Чтобы превращать твою речь в текст сообщения. Распознавание идёт на этом Mac.</string>
 </dict>
 </plist>

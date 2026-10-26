@@ -39,5 +39,7 @@ cp Resources/Anna.png Resources/anna.json Resources/AppIcon.icns "$APP/Contents/
 # Вложенный исполняемый файл подписывается раньше самого .app.
 codesign --force --sign - "$APP/Contents/MacOS/pet-bridge"
 if [[ -f "$APP/Contents/MacOS/pet-channel" ]]; then codesign --force --sign - "$APP/Contents/MacOS/pet-channel"; fi
-codesign --force --sign - "$APP"
+# Требование подписи — по bundle id, а не по хешу (как у ad-hoc по умолчанию): иначе после каждой
+# пересборки macOS забывает выданный доступ к микрофону и распознаванию речи и спрашивает снова.
+codesign --force --sign - -r='designated => identifier "local.claude-code-pet"' "$APP"
 echo "Собрано: $(pwd)/$APP"

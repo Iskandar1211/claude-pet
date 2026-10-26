@@ -21,6 +21,7 @@ A desktop pet for [Claude Code](https://code.claude.com) on macOS. Anna lives ab
 - **Status at a glance.** Anna types on a laptop while Claude works, waves when a session needs your approval, cheers when it's done. With several sessions, the most urgent one wins: needs approval → error → a session that just finished → working → older finished ones.
 - **Menu bar.** Every session with its folder, source (terminal / VS Code) and status; system notifications when a session needs approval or finishes a task that took 20 s or more; clicking one opens that session's chat.
 - **Quick Chat.** Click Anna: the session's conversation as Claude Code shows it (full replies with Markdown, tool calls like `Bash(git status)`), a field to send a message, and Allow / Deny buttons for permission requests.
+- **Voice** (macOS 26+). The 🎤 next to the send button dictates a message in Russian: the text appears in the field, you check it and send. When Claude finishes answering a dictated message, Anna reads the reply aloud — plain text only, code blocks, tables and tool calls are skipped; ⏹ stops her. Recognition runs on your Mac: the first dictation downloads Apple's Russian speech model (about a minute), audio never leaves the machine.
 - **Usage.** The 5-hour subscription limit in a small badge under Anna's feet; hover for the reset time, click to re-read it right away. Only terminal sessions report it, so after the window resets the badge shows "—" until your next request in a terminal; the menu bar item shows the same status.
 - Anna walks around when nothing is happening. Drop her anywhere and she stays there; throw her and she falls back to the bottom of the screen. She stays visible above full-screen apps and on every Space.
 
@@ -30,7 +31,7 @@ Everything runs locally. The app only talks to Claude Code on your machine.
 
 ## Requirements
 
-- macOS 14 or later
+- macOS 14 or later (voice input: macOS 26 or later)
 - [Claude Code](https://code.claude.com)
 - Xcode Command Line Tools — `xcode-select --install` (full Xcode is **not** needed)
 - Rust — `curl https://sh.rustup.rs -sSf | sh` or `brew install rust`
@@ -74,6 +75,7 @@ Before every change to `settings.json` the previous file is saved to `~/.claude-
 ### Security model
 
 - Everything is local: no network ports are opened by the app; the optional Channel listens on `127.0.0.1` only, on a random port, guarded by a per-process token.
+- Microphone and speech recognition access is asked once. The app's signature is tied to its bundle id (`local.claude-code-pet`) rather than to the binary hash, so a rebuild keeps the permission — and, like the tokens below, any app you build with that id gets it too.
 - Tokens that let the pet send messages and approvals into your sessions live in `~/.claude-pet/` (mode `700`/`600`). **Any process running as your user can read them**, so it could send messages to your Claude sessions — the same trust level as your other dotfiles.
 - Conversation text from transcripts is untrusted: links and images are stripped, and the approval card shows the full command. If a preview is incomplete, **Разрешить** (Allow) is disabled and you answer in the terminal.
 - Backups in `~/.claude-pet/backups/` are copies of your `settings.json` and may contain secrets from its `env` section; delete them if you rotate keys.

@@ -31,8 +31,18 @@ final class QuickChatModel {
     /// Что показано в истории: при изменении статуса/последнего сообщения выбранной сессии — перезапрос.
     private var historyKey: String?
 
+    let voiceInput = VoiceInput()
+    let voiceOutput = VoiceOutput()
+    /// Черновик до начала диктовки: распознанный текст дописывается к нему.
+    private var draftBeforeDictation = ""
+    /// В черновике есть надиктованное — ответ на такое сообщение будет прочитан вслух.
+    private var draftDictated = false
+    /// Голосовое сообщение, ответ на которое ждём: прочитать, когда сессия поработает и закончит.
+    private var awaitingReply: (sessionId: String, text: String, sawWorking: Bool)?
+
     init(bridge: BridgeClient) {
         self.bridge = bridge
+        voiceInput.onTranscript = { [weak self] text in self?.dictated(text) }
     }
 
     var selected: BridgeSession? {
@@ -49,6 +59,7 @@ final class QuickChatModel {
             resetConversation()
         }
         if isOpen { reloadHistoryIfNeeded() }
+        checkAwaitedReply()
     }
 
     func bridgeStateChanged(_ state: BridgeClient.State) {
@@ -114,6 +125,9 @@ final class QuickChatModel {
     func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let session = selected, feedback != .sending else { return }
+        voiceInput.stop()
+        voiceOutput.stop()
+        let byVoice = draftDictated
         feedback = .sending
         Task {
             let result = await bridge.send(.send(sessionId: session.id, text: text))
@@ -122,12 +136,76 @@ final class QuickChatModel {
             case .success(.result(_, let delivery)):
                 feedback = delivery == "unconfirmed" ? .unconfirmed : .delivered
                 draft = ""
+                draftDictated = false
+                if byVoice { awaitingReply = (session.id, text, false) }
             case .success:
                 feedback = .failed("неожиданный ответ моста")
             case .failure(let error):
                 feedback = .failed(error.message)
             }
         }
+    }
+
+    // MARK: - Голос
+
+    /// 🎤 в поле ввода: начать или закончить диктовку. Говорящая Анна при этом замолкает.
+    func toggleDictation() {
+        if voiceInput.state == .idle {
+            voiceOutput.stop()
+            draftBeforeDictation = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        voiceInput.toggle()
+    }
+
+    private func dictated(_ text: String) {
+        // Поздние результаты после «стоп» или отправки не должны вернуть текст в очищенное поле.
+        guard voiceInput.state == .listening || voiceInput.state == .preparing, !text.isEmpty else { return }
+        draft = draftBeforeDictation.isEmpty ? text : "\(draftBeforeDictation) \(text)"
+        draftDictated = true
+    }
+
+    /// Ответ на голосовое сообщение читается, когда сессия сначала поработала, а потом закончила:
+    /// сразу после отправки в снимке ещё может стоять «готово» от прошлого ответа.
+    private func checkAwaitedReply() {
+        guard let awaited = awaitingReply else { return }
+        guard let session = sessions.first(where: { $0.id == awaited.sessionId }) else {
+            awaitingReply = nil
+            return
+        }
+        switch session.status {
+        case .working, .waiting:
+            awaitingReply?.sawWorking = true
+        case .done where awaited.sawWorking:
+            awaitingReply = nil
+            Task { await speakReply(sessionId: awaited.sessionId, to: awaited.text) }
+        case .error, .idle:
+            if awaited.sawWorking { awaitingReply = nil }
+        case .done:
+            break
+        }
+    }
+
+    private func speakReply(sessionId: String, to sent: String) async {
+        let result = await bridge.send(.history(sessionId: sessionId, limit: Self.historyLimit))
+        guard case .success(.history(let list)) = result else { return }
+        let reply = Self.reply(in: list, to: sent)
+        voiceOutput.speak(UntrustedText.multiline(reply, limit: Self.spokenLimit))
+    }
+
+    /// Дольше этого Анна не читает: длинные ответы всё равно видны в чате.
+    private static let spokenLimit = 4_000
+
+    /// Чистая функция: текст ответов ассистента после нашего сообщения и до следующего сообщения
+    /// пользователя (ищем по началу текста, как мост подтверждает доставку); не нашли — после последнего.
+    static func reply(in messages: [BridgeClient.HistoryMessage], to sent: String) -> String {
+        let prefix = String(sent.prefix(40))
+        let userTexts = messages.indices.filter { messages[$0].role == "user" && messages[$0].kind == "text" }
+        let start = userTexts.last { messages[$0].text?.contains(prefix) == true } ?? userTexts.last ?? -1
+        let end = userTexts.first { $0 > start } ?? messages.endIndex
+        return messages[(start + 1)..<end]
+            .filter { $0.role == "assistant" && $0.kind == "text" }
+            .compactMap(\.text)
+            .joined(separator: "\n\n")
     }
 
     // MARK: - Одобрения

@@ -180,6 +180,7 @@ struct QuickChatView: View {
                     .padding(.vertical, 7)
                     .background(ChatTheme.surface, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(ChatTheme.surfaceBorder))
+                voiceButton
                 Button { model.sendDraft() } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 24))
                 }
@@ -191,9 +192,41 @@ struct QuickChatView: View {
             if let feedback = model.feedback {
                 feedbackLabel(feedback)
             }
+            switch model.voiceInput.state {
+            case .preparing:
+                Text(verbatim: "Загружаю распознавание речи (только в первый раз)…").foregroundStyle(.secondary).font(.caption)
+            case .unavailable(let reason):
+                Text(verbatim: reason).foregroundStyle(.orange).font(.caption).lineLimit(2)
+            case .idle, .listening:
+                EmptyView()
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// Пока Анна читает ответ — «замолчать»; иначе 🎤: начать или закончить диктовку.
+    @ViewBuilder
+    private var voiceButton: some View {
+        if model.voiceOutput.isSpeaking {
+            Button { model.voiceOutput.stop() } label: {
+                Image(systemName: "stop.circle.fill").font(.system(size: 24))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(ChatTheme.accent)
+            .help("Замолчать")
+        } else {
+            let state = model.voiceInput.state
+            Button { model.toggleDictation() } label: {
+                Image(systemName: state == .listening ? "mic.circle.fill" : "mic.circle")
+                    .font(.system(size: 24))
+                    .symbolEffect(.pulse, isActive: state == .listening || state == .preparing)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(state == .listening ? Color.red : Color.secondary)
+            .disabled({ if case .unavailable = state { true } else { false } }())
+            .help(state == .listening ? "Закончить диктовку" : "Надиктовать сообщение")
+        }
     }
 
     private var canSend: Bool {
