@@ -16,26 +16,43 @@ PAD, GAP, LABEL_H = 14, 10, 34
 BG, CARD = (27, 31, 43), (40, 45, 62)
 TEXT, ACCENT = (205, 210, 225), (255, 150, 60)
 
-STEP = 0.04                  # сетка времени, с; всё кратно ей, чтобы цикл замкнулся без швов
-LOOP_STEPS = 132             # 5,28 с = НОК периодов ходьбы (3), поз (12) и покоя (66)
+STEP = 0.04                  # сетка времени, с
+LOOP_STEPS = 250             # 10 с; периоды сценок разные, поэтому на стыке цикла возможен малозаметный шов
 
-# Покой: кадр 0 держится 2,48 с, моргание (кадр 1) — 0,16 с; шаги по 0,04 с.
-IDLE_PERIOD, BLINK_AT, BLINK_LEN = 66, 62, 4
-WALK_STEPS, POSE_STEPS = 3, 11   # ходьба 0,12 с на кадр, позы ~0,45 с на кадр
+# Сценки как в PetScene.animation: (кадр, секунды) по кругу. «done» и «picked up» в приложении
+# не повторяются (ликует и остаётся довольной; паникует, пока держат) — в гифке крутятся целиком.
+SCENES = {
+    "idle": [(0, 2.5), (1, 0.08), (2, 0.14), (3, 2.0), (1, 0.08), (2, 0.14)],
+    "working": [(0, 0.25), (1, 0.25), (2, 0.25)] * 3 + [(3, 1.2)],
+    "waiting": [(0, 0.3), (1, 0.3), (2, 0.3), (3, 0.3)],
+    "done": [(0, 0.3), (1, 0.3), (2, 0.3)] * 2 + [(3, 3.0)],
+    "walk": [(0, 0.12), (1, 0.12), (2, 0.12), (3, 0.12)],
+    "drag": [(0, 0.2), (1, 0.2)] + [(2, 0.25), (3, 0.25)] * 6,
+}
 
 
-def pick_idle(step: int) -> int:
-    return 1 if BLINK_AT <= step % IDLE_PERIOD < BLINK_AT + BLINK_LEN else 0
+def picker(scene: list[tuple[int, float]]):
+    period = sum(seconds for _, seconds in scene)
+
+    def pick(step: int) -> int:
+        t = (step * STEP) % period
+        for frame, seconds in scene:
+            if t < seconds:
+                return frame
+            t -= seconds
+        return scene[-1][0]
+
+    return pick
 
 
 # (подпись, строка в спрайт-листе, как выбрать кадр по шагу времени)
 STATES = [
-    ("idle", 0, pick_idle),
-    ("working", 1, lambda s: (s // POSE_STEPS) % 2),       
-    ("needs approval", 2, lambda s: (s // POSE_STEPS) % 2),
-    ("done", 3, lambda s: (s // POSE_STEPS) % 2),
-    ("walking", 5, lambda s: (s // WALK_STEPS) % 4),
-    ("picked up", 6, lambda s: 0),
+    ("idle", 0, picker(SCENES["idle"])),
+    ("working", 1, picker(SCENES["working"])),
+    ("needs approval", 2, picker(SCENES["waiting"])),
+    ("done", 3, picker(SCENES["done"])),
+    ("walking", 5, picker(SCENES["walk"])),
+    ("picked up", 6, picker(SCENES["drag"])),
 ]
 
 

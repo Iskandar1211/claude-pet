@@ -3,12 +3,12 @@
   "imageSrc": "/media/Anna.png",
   "name": "Anna",
   "states": {
-    "idle": { "frameMax": 2, "spriteLine": 1 },
-    "working": { "frameMax": 2, "spriteLine": 2 },
-    "waiting": { "frameMax": 2, "spriteLine": 3 },
-    "done": { "frameMax": 2, "spriteLine": 4 },
-    "error": { "frameMax": 2, "spriteLine": 5 },
+    "idle": { "frameMax": 4, "spriteLine": 1 },
+    "working": { "frameMax": 4, "spriteLine": 2 },
+    "waiting": { "frameMax": 4, "spriteLine": 3 },
+    "done": { "frameMax": 4, "spriteLine": 4 },
+    "error": { "frameMax": 4, "spriteLine": 5 },
     "walk": { "frameMax": 4, "spriteLine": 6 },
-    "drag": { "frameMax": 1, "spriteLine": 7 }
+    "drag": { "frameMax": 4, "spriteLine": 7 }
   }
 }
