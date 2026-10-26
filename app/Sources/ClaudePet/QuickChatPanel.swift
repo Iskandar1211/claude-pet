@@ -25,6 +25,7 @@ final class QuickChatPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
+        isMovableByWindowBackground = true
         contentView = content
     }
 

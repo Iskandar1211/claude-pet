@@ -122,7 +122,8 @@ struct MarkdownView: View {
             Text(Markdown.inline(text))
         case .heading(let level, let text):
             Text(Markdown.inline(text))
-                .font(level == 1 ? .headline : .subheadline.weight(.semibold))
+                // От размера текста сообщения: системные .headline/.subheadline мельче него.
+                .font(.system(size: ChatTheme.messageSize + (level == 1 ? 2 : 0), weight: .semibold))
                 .padding(.top, 2)
         case .listItem(let marker, let indent, let text):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -133,7 +134,7 @@ struct MarkdownView: View {
         case .code(let code):
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(verbatim: code)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(ChatTheme.codeFont)
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(8)
             }

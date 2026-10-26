@@ -16,6 +16,11 @@ enum ChatTheme {
     static let userBubble = Color.white.opacity(0.13)
     static let panelBorder = Color.white.opacity(0.10)
 
+    /// Текст сообщений и поля ввода; инструменты, результаты и код — моноширинным чуть мельче.
+    static let messageSize: CGFloat = 14
+    static let messageFont = Font.system(size: messageSize)
+    static let codeFont = Font.system(size: 11, design: .monospaced)
+
     static let panelBackground = LinearGradient(
         colors: [Color(red: 0.20, green: 0.23, blue: 0.31), Color(red: 0.09, green: 0.11, blue: 0.15)],
         startPoint: .top,

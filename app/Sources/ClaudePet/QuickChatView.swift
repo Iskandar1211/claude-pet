@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Содержимое панели Quick Chat. Все тексты из сессий (сообщения, input_preview, last_message, cwd)
@@ -35,12 +36,16 @@ struct QuickChatView: View {
     // MARK: - Сессии
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "pawprint.fill").foregroundStyle(ChatTheme.accent)
-            Text(verbatim: "Claude Pet")
-                .font(.headline)
-                .lineLimit(1)
-            Spacer(minLength: 6)
+        HStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "pawprint.fill").foregroundStyle(ChatTheme.accent)
+                Text(verbatim: "Claude Pet")
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(WindowDragHandle())
             CloseDot(action: onClose)
         }
         .padding(.horizontal, 16)
@@ -182,6 +187,7 @@ struct QuickChatView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(inputPrompt, text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
+                    .font(ChatTheme.messageFont)
                     .lineLimit(1...5)
                     .focused($inputFocused)
                     .onSubmit { model.sendDraft() }
@@ -323,7 +329,7 @@ private struct MessageBubble: View {
         if message.role == "user" {
             // Свои сообщения — пузырём справа и без Markdown: в них бывают служебные теги inbox/Channel.
             Text(verbatim: text)
-                .font(.callout)
+                .font(ChatTheme.messageFont)
                 .textSelection(.enabled)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 7)
@@ -334,7 +340,7 @@ private struct MessageBubble: View {
             // Ответ Claude — как в Claude Code: маркер ⏺ и текст с разметкой, без подложки.
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Text(verbatim: "⏺").font(.caption).foregroundStyle(ChatTheme.accent)
-                MarkdownView(text).font(.callout)
+                MarkdownView(text).font(ChatTheme.messageFont)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -350,7 +356,7 @@ private struct MessageBubble: View {
                 .lineLimit(2)
                 .truncationMode(.tail)
         }
-        .font(.system(.caption, design: .monospaced))
+        .font(ChatTheme.codeFont)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -366,7 +372,7 @@ private struct MessageBubble: View {
                 }
             }
         }
-        .font(.system(.caption, design: .monospaced))
+        .font(ChatTheme.codeFont)
         .padding(.leading, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -408,6 +414,21 @@ extension PetStatus {
         case .waiting: .orange
         case .done: .green
         case .error: .red
+        }
+    }
+}
+
+/// Перетаскивание borderless-панели за заголовок (кроме кнопки закрытия).
+private struct WindowDragHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        DragView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
         }
     }
 }
