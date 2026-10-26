@@ -5,6 +5,7 @@ import SwiftUI
 /// `.nonactivatingPanel` не активирует приложение — фокус у других окон не отбирается, Dock-значка нет (LSUIElement).
 final class QuickChatPanel: NSPanel {
     static let size = NSSize(width: 420, height: 560)
+    static let minSize = NSSize(width: 320, height: 400)
 
     /// Esc закрывает панель, откуда бы он ни пришёл (в том числе из поля ввода).
     var onCancel: (() -> Void)?
@@ -12,10 +13,11 @@ final class QuickChatPanel: NSPanel {
     init(content: NSView) {
         super.init(
             contentRect: NSRect(origin: .zero, size: Self.size),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless, .resizable, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        minSize = Self.minSize
         isFloatingPanel = true
         level = .statusBar
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
@@ -71,7 +73,7 @@ final class QuickChatController {
 
     /// Над питомцем, по центру; если сверху не помещается — под ним. Всегда внутри видимой области экрана.
     private func origin(near pet: NSRect) -> NSPoint {
-        let size = QuickChatPanel.size
+        let size = panel.frame.size
         let gap: CGFloat = 8
         let center = NSPoint(x: pet.midX, y: pet.midY)
         let area = (NSScreen.screens.first { $0.frame.contains(center) } ?? NSScreen.main)?.visibleFrame ?? pet

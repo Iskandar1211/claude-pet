@@ -19,7 +19,10 @@ struct QuickChatView: View {
                 emptyState
             }
         }
-        .frame(width: QuickChatPanel.size.width, height: QuickChatPanel.size.height)
+        .frame(
+            minWidth: QuickChatPanel.minSize.width, maxWidth: .infinity,
+            minHeight: QuickChatPanel.minSize.height, maxHeight: .infinity
+        )
         .background(ChatTheme.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(ChatTheme.panelBorder))
