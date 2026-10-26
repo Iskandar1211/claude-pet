@@ -1,6 +1,29 @@
 import AppKit
 import SpriteKit
 
+/// Персонаж питомца: лист `<rawValue>.png` + `<rawValue в нижнем регистре>.json` в Contents/Resources.
+/// Листы собираются scripts/slice_sheet.py и scripts/key_background.py (см. ATTRIBUTION.md).
+enum PetCharacter: String, CaseIterable {
+    case anna = "Anna", kai = "Kai", lira = "Lira", nova = "Nova"
+
+    var title: String {
+        switch self {
+        case .anna: "Анна"
+        case .kai: "Кай"
+        case .lira: "Лира"
+        case .nova: "Нова"
+        }
+    }
+
+    private static let defaultsKey = "petCharacter"
+
+    /// Выбранный в меню лапки; запоминается между запусками.
+    static var current: PetCharacter {
+        get { UserDefaults.standard.string(forKey: defaultsKey).flatMap(PetCharacter.init(rawValue:)) ?? .anna }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+}
+
 /// Spritesheet в формате WindowPet: Anna.png + anna.json (строка = состояние, кадры слева направо).
 @MainActor
 final class SpriteSheet {
@@ -17,15 +40,16 @@ final class SpriteSheet {
     private let config: Config
     private var cache: [String: [SKTexture]] = [:]
 
-    init() {
+    init(_ character: PetCharacter) {
+        let name = character.rawValue
         guard
-            let imageURL = Bundle.main.url(forResource: "Anna", withExtension: "png"),
-            let configURL = Bundle.main.url(forResource: "anna", withExtension: "json"),
+            let imageURL = Bundle.main.url(forResource: name, withExtension: "png"),
+            let configURL = Bundle.main.url(forResource: name.lowercased(), withExtension: "json"),
             let image = NSImage(contentsOf: imageURL)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
             let data = try? Data(contentsOf: configURL),
             let config = try? JSONDecoder().decode(Config.self, from: data)
         else {
-            fatalError("Anna.png / anna.json не найдены в Contents/Resources — запускай через scripts/build_app.sh")
+            fatalError("\(name).png / \(name.lowercased()).json не найдены в Contents/Resources — запускай через scripts/build_app.sh")
         }
         self.image = image
         self.config = config

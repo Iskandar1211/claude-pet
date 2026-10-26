@@ -1,22 +1,24 @@
-"""assets/Anna_source.png (лист на чёрном фоне) -> Resources/Anna.png с прозрачным фоном.
+"""assets/<Имя>_source.png (лист на чёрном фоне) -> Resources/<Имя>.png с прозрачным фоном.
 
 Фон убирается заливкой по связным областям почти чёрного, а не порогом по яркости: обводка у Анны
 тёмно-синяя (синий канал >= ~32), заливка на ней останавливается, и тёмные куртка/сапоги
 внутри фигуры не страдают. Фон — область, касающаяся края кадра, или замкнутая область
 от MIN_HOLE px (просвет между хвостом волос и плечом). Края фона — частичная прозрачность.
 
-Запуск из app/:  python3 -I scripts/key_background.py   (нужен Pillow)
+Запуск из app/:  python3 -I scripts/key_background.py [Имя]   (по умолчанию Anna; нужен Pillow)
 """
 import json
+import sys
 from collections import deque
 from pathlib import Path
 
 from PIL import Image
 
 APP = Path(__file__).resolve().parent.parent
-SOURCE = APP / "assets" / "Anna_source.png"
-OUT = APP / "Resources" / "Anna.png"
-FRAME = json.loads((APP / "Resources" / "anna.json").read_text())["frameSize"]
+NAME = sys.argv[1] if len(sys.argv) > 1 else "Anna"
+SOURCE = APP / "assets" / f"{NAME}_source.png"
+OUT = APP / "Resources" / f"{NAME}.png"
+FRAME = json.loads((APP / "Resources" / f"{NAME.lower()}.json").read_text())["frameSize"]
 
 BACKGROUND = 10  # max(r,g,b) <= BACKGROUND -> кандидат в фон
 MIN_HOLE = 20    # замкнутая чёрная область от стольких px — тоже фон; мельче — часть рисунка

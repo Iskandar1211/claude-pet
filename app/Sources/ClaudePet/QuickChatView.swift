@@ -229,7 +229,7 @@ struct QuickChatView: View {
 
     private var inputPrompt: String {
         if model.voiceInput.state == .listening { return "Слушаю…" }
-        if model.voiceOutput.isSpeaking { return "Анна говорит…" }
+        if model.voiceOutput.isSpeaking { return "\(PetCharacter.current.title) говорит…" }
         return "Сообщение Claude…"
     }
 

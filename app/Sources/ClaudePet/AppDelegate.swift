@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pet: PetController?
     private let toggleItem = NSMenuItem(title: "Скрыть питомца", action: #selector(togglePet), keyEquivalent: "")
     private var statusItems: [NSMenuItem] = []
+    private var characterItems: [NSMenuItem] = []
     private let bridge = BridgeClient()
     private let notifier = SessionNotifier()
     private var sessionItems: [NSMenuItem] = []
@@ -23,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let view = PetView()
-        let scene = PetScene(sheet: SpriteSheet(), size: view.frame.size)
+        let scene = PetScene(sheet: SpriteSheet(PetCharacter.current), size: view.frame.size)
         // Капсула лимита — полоской под ногами: спрайт стоит вплотную к нижнему краю кадра.
         let petSize = PetView.displaySize
         let content = PetChromeView(frame: NSRect(x: 0, y: 0, width: petSize, height: petSize))
@@ -152,6 +153,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(usageItem)
         usageItem.title = UsageStore.describe(UsageStore.load())
 
+        let characterMenu = NSMenu()
+        for character in PetCharacter.allCases {
+            let entry = NSMenuItem(title: character.title, action: #selector(selectCharacter(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = character.rawValue
+            entry.state = character == PetCharacter.current ? .on : .off
+            characterMenu.addItem(entry)
+            characterItems.append(entry)
+        }
+        let characterRoot = NSMenuItem(title: "Персонаж", action: nil, keyEquivalent: "")
+        characterRoot.submenu = characterMenu
+        menu.addItem(characterRoot)
+
         // Ручная проверка анимаций; следующий снимок моста статус перебивает.
         let statusMenu = NSMenu()
         for status in PetStatus.allCases {
@@ -214,6 +228,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             panel.orderFrontRegardless()
             toggleItem.title = "Скрыть питомца"
         }
+    }
+
+    @objc private func selectCharacter(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let character = PetCharacter(rawValue: raw) else { return }
+        PetCharacter.current = character
+        characterItems.forEach { $0.state = $0.representedObject as? String == raw ? .on : .off }
+        pet?.setCharacter(character)
     }
 
     @objc private func selectStatus(_ sender: NSMenuItem) {

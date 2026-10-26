@@ -75,6 +75,10 @@ final class PetController {
         refreshAnimation()
     }
 
+    func setCharacter(_ character: PetCharacter) {
+        scene.use(SpriteSheet(character), animated: !reduceMotion)
+    }
+
     // MARK: - Перетаскивание (координаты экрана, NSEvent.mouseLocation)
 
     func mouseDown(at point: NSPoint, time: TimeInterval) {

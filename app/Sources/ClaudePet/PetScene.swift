@@ -10,7 +10,7 @@ final class PetScene: SKScene {
         didSet { sprite.xScale = facingLeft ? -1 : 1 }
     }
 
-    private let sheet: SpriteSheet
+    private var sheet: SpriteSheet
     private let sprite = SKSpriteNode()
     private var currentState: String?
 
@@ -37,6 +37,14 @@ final class PetScene: SKScene {
         if animated, textures.count > 1 {
             sprite.run(Self.animation(state, textures), withKey: "anim")
         }
+    }
+
+    /// Другой персонаж: то же состояние, но кадры нового листа.
+    func use(_ sheet: SpriteSheet, animated: Bool) {
+        self.sheet = sheet
+        guard let state = currentState else { return }
+        currentState = nil
+        play(state, animated: animated)
     }
 
     override func update(_ currentTime: TimeInterval) {

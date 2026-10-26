@@ -1,0 +1,14 @@
+{
+  "frameSize": 392,
+  "imageSrc": "/media/Lira.png",
+  "name": "Lira",
+  "states": {
+    "idle": { "frameMax": 4, "spriteLine": 1 },
+    "working": { "frameMax": 4, "spriteLine": 2 },
+    "waiting": { "frameMax": 4, "spriteLine": 3 },
+    "done": { "frameMax": 4, "spriteLine": 4 },
+    "error": { "frameMax": 4, "spriteLine": 5 },
+    "walk": { "frameMax": 4, "spriteLine": 6 },
+    "drag": { "frameMax": 4, "spriteLine": 7 }
+  }
+}

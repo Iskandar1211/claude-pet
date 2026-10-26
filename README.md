@@ -24,6 +24,7 @@ A desktop pet for [Claude Code](https://code.claude.com) on macOS. Anna lives ab
 - **Voice** (macOS 26+). The 🎤 next to the send button dictates a message in Russian: the text appears in the field, you check it and send. When Claude finishes answering a dictated message, Anna reads the reply aloud — plain text only, code blocks, tables and tool calls are skipped; ⏹ stops her. Recognition runs on your Mac: the first dictation downloads Apple's Russian speech model (about a minute), audio never leaves the machine.
 - **Usage.** The 5-hour subscription limit in a small badge under Anna's feet; hover for the reset time, click to re-read it right away. Only terminal sessions report it, so after the window resets the badge shows "—" until your next request in a terminal; the menu bar item shows the same status.
 - Anna walks around when nothing is happening. Drop her anywhere and she stays there; throw her and she falls back to the bottom of the screen. She stays visible above full-screen apps and on every Space.
+- **Characters.** Anna has three friends — Kai, Lira and Nova. Pick one in the paw menu → **Персонаж** (Character); the choice is remembered.
 
 Everything runs locally. The app only talks to Claude Code on your machine.
 

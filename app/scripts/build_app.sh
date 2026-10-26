@@ -33,7 +33,11 @@ cp "$BIN" "$APP/Contents/MacOS/ClaudePet"
 cp "$BRIDGE" "$APP/Contents/MacOS/pet-bridge"
 if [[ -f "$CHANNEL" ]]; then cp "$CHANNEL" "$APP/Contents/MacOS/pet-channel"; fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-cp Resources/Anna.png Resources/anna.json Resources/AppIcon.icns "$APP/Contents/Resources/"
+# Персонажи — PetCharacter в SpriteSheet.swift: лист <Имя>.png + разметка <имя>.json.
+for name in Anna Kai Lira Nova; do
+  cp "Resources/$name.png" "Resources/$(echo "$name" | tr '[:upper:]' '[:lower:]').json" "$APP/Contents/Resources/"
+done
+cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
 # Ad-hoc подпись: для себя хватает, для раздачи нужен Developer ID + notarytool.
 # Вложенный исполняемый файл подписывается раньше самого .app.
