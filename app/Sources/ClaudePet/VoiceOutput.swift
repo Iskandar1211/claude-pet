@@ -18,8 +18,18 @@ final class VoiceOutput {
         synthesizer.delegate = delegate
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "ru-RU")
+        utterance.voice = Self.bestRussianVoice()
         synthesizer.speak(utterance)
+    }
+
+    /// Лучший установленный русский голос: premium → enhanced → базовый. `AVSpeechSynthesisVoice(language:)`
+    /// отдаёт базовый, даже если улучшенный скачан. Ищем при каждом чтении — скачанный голос подхватится без перезапуска.
+    /// Голоса Siri сторонним приложениям недоступны и в этот список не попадают.
+    private static func bestRussianVoice() -> AVSpeechSynthesisVoice? {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language == "ru-RU" }
+            .max { $0.quality.rawValue < $1.quality.rawValue }
+            ?? AVSpeechSynthesisVoice(language: "ru-RU")
     }
 
     func stop() {
