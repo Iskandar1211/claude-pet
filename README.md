@@ -1,30 +1,38 @@
 # Claude Pet
 
-A desktop pet for [Claude Code](https://code.claude.com) on macOS. Anna lives above your windows and shows what your Claude Code sessions are doing — working, waiting for approval, done — and a click opens a quick chat with the current session. Works with sessions in the terminal and in the VS Code / Cursor extension.
+A desktop pet for [Claude Code](https://code.claude.com) on macOS. Anna — or one of her three friends — lives above your windows and shows what your Claude Code sessions are doing — working, waiting for approval, done — and a click opens a quick chat with the current session. Works with sessions in the terminal and in the VS Code / Cursor extension.
 
 <p align="center">
   <img src="docs/anna-states.gif" alt="Anna's states: idle, working, needs approval, done, walking, picked up" width="760">
 </p>
 
 <p align="center">
-  <img src="docs/quick-chat.png" alt="Quick Chat: the session list and the conversation with Markdown and tool calls" width="300">
+  <img src="docs/characters.png" alt="The four characters: Anna, Kai, Lira and Nova" width="620">
   &nbsp;
-  <img src="docs/approval.png" alt="Approval card: the full command with Allow and Deny buttons" width="300">
-  &nbsp;
-  <img src="docs/pet-usage.png" alt="Anna working, with the 5-hour usage badge under her feet" width="130">
+  <img src="docs/pet-usage.png" alt="Anna working, with the 5-hour usage badge under her feet" width="110">
 </p>
 
-<p align="center"><sub>Quick Chat and approvals (sample data) · the 5-hour usage badge under Anna's feet</sub></p>
+<p align="center"><sub>Pick a character in the paw menu · the 5-hour usage badge under the pet's feet</sub></p>
+
+<p align="center">
+  <img src="docs/quick-chat.png" alt="Quick Chat: the session list and the conversation with Markdown and tool calls" width="250">
+  &nbsp;
+  <img src="docs/approval.png" alt="Approval card: the full command with Allow and Deny buttons" width="250">
+  &nbsp;
+  <img src="docs/voice.png" alt="Voice mode: a warm glow above the input while the pet reads the reply aloud, with a Stop button" width="250">
+</p>
+
+<p align="center"><sub>Quick Chat, approvals and voice mode (sample data)</sub></p>
 
 ## What it does
 
 - **Status at a glance.** Anna types on a laptop while Claude works, waves when a session needs your approval, cheers when it's done. With several sessions, the most urgent one wins: needs approval → error → a session that just finished → working → older finished ones.
 - **Menu bar.** Every session with its folder, source (terminal / VS Code) and status; system notifications when a session needs approval or finishes a task that took 20 s or more; clicking one opens that session's chat.
-- **Quick Chat.** Click Anna: the session's conversation as Claude Code shows it (full replies with Markdown, tool calls like `Bash(git status)`), a field to send a message, and Allow / Deny buttons for permission requests.
-- **Voice** (macOS 26+). The 🎤 next to the send button dictates a message in Russian: the text appears in the field, you check it and send. When Claude finishes answering a dictated message, Anna reads the reply aloud — plain text only, code blocks, tables and tool calls are skipped; ⏹ stops her. Recognition runs on your Mac: the first dictation downloads Apple's Russian speech model (about a minute), audio never leaves the machine.
+- **Quick Chat.** Click Anna: the session's conversation as Claude Code shows it (full replies with Markdown, tool calls like `Bash(git status)`), a field to send a message, and Allow / Deny buttons for permission requests. Drag the window by its title bar and resize it from the edges.
+- **Voice** (macOS 26+). The 🎤 next to the send button dictates a message in Russian: the text appears in the field, you check it and send. When Claude finishes answering a dictated message, the pet reads the reply aloud — plain text only, code blocks, tables and tool calls are skipped. While you dictate, a warm glow above the field follows your voice; while the pet reads, it breathes, and **Стоп** (Stop) cuts it short. The pet uses the best Russian voice installed: for a more natural one, download *Milena (Enhanced)* in System Settings → Accessibility → Read & Speak → System voice → Manage Voices. Recognition runs on your Mac: the first dictation downloads Apple's Russian speech model (about a minute), audio never leaves the machine.
 - **Usage.** The 5-hour subscription limit in a small badge under Anna's feet; hover for the reset time, click to re-read it right away. Only terminal sessions report it, so after the window resets the badge shows "—" until your next request in a terminal; the menu bar item shows the same status.
 - Anna walks around when nothing is happening. Drop her anywhere and she stays there; throw her and she falls back to the bottom of the screen. She stays visible above full-screen apps and on every Space.
-- **Characters.** Anna has three friends — Kai, Lira and Nova. Pick one in the paw menu → **Персонаж** (Character); the choice is remembered.
+- **Characters.** Anna has three friends — Kai the fighter, Lira the bookworm and Nova the cyber girl. Pick one in the paw menu → **Персонаж** (Character); the switch is instant and remembered.
 
 Everything runs locally. The app only talks to Claude Code on your machine.
 
@@ -120,13 +128,13 @@ cd bridge && cargo test                     # bridge tests
 - `app/` — Swift (SwiftPM, no Xcode project): pet window, SpriteKit animations, Quick Chat (SwiftUI).
 - `bridge/` — Rust: session registry, transcript reader, installer, `serve` protocol.
 - `prototype/hooks/`, `prototype/channel/` — hook scripts and the Channel MCP server.
-- Anna's sprite sheet: `app/assets/Anna_source.png` → `app/scripts/key_background.py` → `app/Resources/Anna.png`.
-- README images (`docs/`): `app/scripts/make_gif.py` (Anna's states from the sprite sheet), `app/scripts/render_screenshots.sh` (Quick Chat with sample data), `app/scripts/make_icon.py` (app icon).
+- Sprite sheets: `app/assets/<Name>_source.png` → `app/scripts/key_background.py <Name>` → `app/Resources/<Name>.png`. A sheet straight from an image generator first goes through `app/scripts/slice_sheet.py`, which re-packs the poses into the 4×7 grid of 392 px cells.
+- README images (`docs/`): `app/scripts/make_gif.py` (Anna's states from the sprite sheet), `app/scripts/make_characters.py` (all characters in a row), `app/scripts/render_screenshots.sh` (Quick Chat, approvals and voice mode with sample data), `app/scripts/make_icon.py` (app icon).
 
 ## Credits
 
 - Pet behavior and the sprite sheet format follow [WindowPet](https://github.com/SeakMengs/WindowPet) (MIT).
-- Anna was generated with AI for this project; see [`app/ATTRIBUTION.md`](app/ATTRIBUTION.md).
+- Anna, Kai, Lira and Nova were generated with AI for this project; see [`app/ATTRIBUTION.md`](app/ATTRIBUTION.md).
 
 ## License
 

@@ -16,11 +16,13 @@ func message(_ json: String) -> BridgeClient.HistoryMessage {
     try! JSONDecoder().decode(BridgeClient.HistoryMessage.self, from: Data(json.utf8))
 }
 
-@MainActor func render(_ sessions: [BridgeSession], messages: [BridgeClient.HistoryMessage], to path: String) {
+@MainActor func render(_ sessions: [BridgeSession], messages: [BridgeClient.HistoryMessage], to path: String,
+                       setup: (QuickChatModel) -> Void = { _ in }) {
     let model = QuickChatModel(bridge: BridgeClient())
     model.update(sessions: sessions)
     model.selectedId = sessions[0].sessionId
     model.messages = messages
+    setup(model)
     let margin: CGFloat = 26 // место под тень
     let size = NSSize(width: QuickChatPanel.size.width + margin * 2, height: QuickChatPanel.size.height + margin * 2)
     let root = QuickChatView(model: model, onClose: {})
@@ -72,5 +74,18 @@ MainActor.assumeIsolated {
             message(#"{"role":"assistant","kind":"text","text":"I need to install the SDK first — waiting for your approval."}"#),
         ],
         to: outDir + "/approval.png"
+    )
+
+    // Голосовой режим: питомец читает ответ вслух — свечение над полем и плашка «Стоп».
+    render(
+        [session("web-shop", "done", "assistant: All 12 tests pass.", entrypoint: "cli")],
+        messages: [
+            message(#"{"role":"user","kind":"text","text":"Run the tests and tell me what failed."}"#),
+            message(#"{"role":"assistant","kind":"tool","name":"Bash","summary":"npm test"}"#),
+            message(#"{"role":"user","kind":"result","text":"Tests: 12 passed, 12 total"}"#),
+            message(#"{"role":"assistant","kind":"text","text":"Nothing failed — all **12 tests** pass."}"#),
+        ],
+        to: outDir + "/voice.png",
+        setup: { $0.voiceOutput.isSpeaking = true }
     )
 }
