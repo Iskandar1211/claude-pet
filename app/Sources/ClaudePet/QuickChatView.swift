@@ -83,6 +83,12 @@ struct QuickChatView: View {
         VStack(spacing: 0) {
             approval(for: session)
             messageList
+                .background(alignment: .bottom) {
+                    if let mode = voiceGlowMode {
+                        VoiceGlow(mode: mode).transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.4), value: voiceGlowMode == nil)
             Divider()
             inputBar
         }
@@ -174,7 +180,7 @@ struct QuickChatView: View {
         @Bindable var model = model
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Сообщение Claude…", text: $model.draft, axis: .vertical)
+                TextField(inputPrompt, text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .focused($inputFocused)
@@ -208,27 +214,37 @@ struct QuickChatView: View {
         .padding(.vertical, 10)
     }
 
-    /// Пока Анна читает ответ — «замолчать»; иначе 🎤: начать или закончить диктовку.
+    /// Свечение над полем: диктовка важнее чтения — начав говорить, ты и так останавливаешь Анну.
+    private var voiceGlowMode: VoiceGlow.Mode? {
+        if model.voiceInput.state == .listening { return .listening(level: model.voiceInput.level) }
+        if model.voiceOutput.isSpeaking { return .speaking }
+        return nil
+    }
+
+    private var inputPrompt: String {
+        if model.voiceInput.state == .listening { return "Слушаю…" }
+        if model.voiceOutput.isSpeaking { return "Анна говорит…" }
+        return "Сообщение Claude…"
+    }
+
+    /// Пока идёт голос — плашка «Стоп» / «Готово»; иначе 🎤: начать диктовку.
     @ViewBuilder
     private var voiceButton: some View {
-        if model.voiceOutput.isSpeaking {
-            Button { model.voiceOutput.stop() } label: {
-                Image(systemName: "stop.circle.fill").font(.system(size: 24))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(ChatTheme.accent)
-            .help("Замолчать")
+        let state = model.voiceInput.state
+        if state == .listening || state == .preparing {
+            VoicePill(title: "Готово") { model.toggleDictation() }
+                .help("Закончить диктовку")
+        } else if model.voiceOutput.isSpeaking {
+            VoicePill(title: "Стоп") { model.voiceOutput.stop() }
+                .help("Замолчать")
         } else {
-            let state = model.voiceInput.state
             Button { model.toggleDictation() } label: {
-                Image(systemName: state == .listening ? "mic.circle.fill" : "mic.circle")
-                    .font(.system(size: 24))
-                    .symbolEffect(.pulse, isActive: state == .listening || state == .preparing)
+                Image(systemName: "mic.circle").font(.system(size: 24))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(state == .listening ? Color.red : Color.secondary)
+            .foregroundStyle(Color.secondary)
             .disabled({ if case .unavailable = state { true } else { false } }())
-            .help(state == .listening ? "Закончить диктовку" : "Надиктовать сообщение")
+            .help("Надиктовать сообщение")
         }
     }
 

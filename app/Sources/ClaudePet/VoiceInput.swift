@@ -19,6 +19,8 @@ final class VoiceInput {
     private(set) var state: State = .idle
     /// Весь распознанный за запись текст: подтверждённая часть + текущая догадка.
     var onTranscript: ((String) -> Void)?
+    /// Громкость микрофона 0…1 во время записи — для свечения в Quick Chat (~12 раз в секунду).
+    private(set) var level: Float = 0
 
     private static let locale = Locale(identifier: "ru_RU")
     /// `DictationSession`; `AnyObject`, потому что сам тип есть только в macOS 26.
@@ -28,6 +30,16 @@ final class VoiceInput {
         if #unavailable(macOS 26) {
             state = .unavailable("Голосовой ввод работает на macOS 26 и новее")
         }
+    }
+
+    /// Среднеквадратичная громкость буфера в шкале 0…1: −50 дБ (тишина в комнате) → 0, −10 дБ (громкая речь) → 1.
+    nonisolated static func level(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
+        let count = Int(buffer.frameLength)
+        var sum: Float = 0
+        for i in 0..<count { sum += samples[i] * samples[i] }
+        let decibels = 20 * log10(max(sqrt(sum / Float(count)), 1e-7))
+        return min(max((decibels + 50) / 40, 0), 1)
     }
 
     func toggle() {
@@ -42,6 +54,7 @@ final class VoiceInput {
         guard #available(macOS 26, *), let session = session as? DictationSession else { return }
         self.session = nil
         state = .idle
+        level = 0
         Task { await session.finish() }
     }
 
@@ -57,6 +70,11 @@ final class VoiceInput {
         state = installed ? .listening : .preparing
         let session = DictationSession(locale: Self.locale) { [weak self] text in
             Task { @MainActor in self?.onTranscript?(text) }
+        } onLevel: { [weak self] level in
+            Task { @MainActor in
+                guard let self, self.state == .listening else { return }
+                self.level = level
+            }
         }
         self.session = session
         do {
@@ -81,13 +99,15 @@ private final class DictationSession {
     private let analyzer: SpeechAnalyzer
     private let engine = AVAudioEngine()
     private let onText: @Sendable (String) -> Void
+    private let onLevel: @Sendable (Float) -> Void
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var results: Task<Void, Never>?
 
-    init(locale: Locale, onText: @escaping @Sendable (String) -> Void) {
+    init(locale: Locale, onText: @escaping @Sendable (String) -> Void, onLevel: @escaping @Sendable (Float) -> Void) {
         transcriber = DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
         analyzer = SpeechAnalyzer(modules: [transcriber])
         self.onText = onText
+        self.onLevel = onLevel
     }
 
     func start() async throws {
@@ -120,7 +140,7 @@ private final class DictationSession {
 
         let mic = engine.inputNode.outputFormat(forBus: 0)
         guard let converter = AVAudioConverter(from: mic, to: format) else { throw VoiceError.noAudioFormat }
-        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: mic, block: Self.tap(converter, format, input))
+        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: mic, block: Self.tap(converter, format, input, onLevel))
         engine.prepare()
         try engine.start()
         try await analyzer.start(inputSequence: stream)
@@ -138,9 +158,11 @@ private final class DictationSession {
 
     /// Вызывается на аудиопотоке, поэтому вне главного актора.
     private nonisolated static func tap(
-        _ converter: AVAudioConverter, _ format: AVAudioFormat, _ input: AsyncStream<AnalyzerInput>.Continuation
+        _ converter: AVAudioConverter, _ format: AVAudioFormat, _ input: AsyncStream<AnalyzerInput>.Continuation,
+        _ onLevel: @escaping @Sendable (Float) -> Void
     ) -> AVAudioNodeTapBlock {
         { buffer, _ in
+            onLevel(VoiceInput.level(of: buffer))
             guard let converted = convert(buffer, with: converter, to: format) else { return }
             input.yield(AnalyzerInput(buffer: converted))
         }
