@@ -103,56 +103,7 @@ struct QuickChatView: View {
     private func approval(for session: BridgeSession) -> some View {
         // Запрос приходит через Channel или через hook PermissionRequest (сессии из IDE) — ответить можно на оба.
         if let pending = session.pendingPermission {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(verbatim: "Просит разрешение: \(UntrustedText.clean(pending.toolName, limit: 60))")
-                    .font(.callout.weight(.semibold))
-                // Команда показывается целиком, с переводами строк и прокруткой: по обрезанному началу
-                // нельзя судить, что выполнится. Если превью неполное — «Разрешить» недоступно.
-                let truncated = Self.isTruncated(pending.inputPreview)
-                ScrollView {
-                    Text(verbatim: UntrustedText.multiline(pending.inputPreview, limit: Self.previewLimit))
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: Self.previewHeight(pending.inputPreview))
-                .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
-                if truncated {
-                    Text(verbatim: "Превью неполное — посмотри полную команду в терминале и ответь там.")
-                        .font(.caption).foregroundStyle(.red)
-                }
-                let remember = Self.rememberLines(pending.remember)
-                if let remember {
-                    ForEach(Array(remember.enumerated()), id: \.offset) { _, line in
-                        (Text(verbatim: "Запомнить: ").font(.caption)
-                            + Text(verbatim: line.rules).font(.system(.caption, design: .monospaced))
-                            + Text(verbatim: " — \(line.place)").font(.caption))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                HStack {
-                    Button("Разрешить") { model.answerPermission(requestId: pending.requestId, allow: true) }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(truncated)
-                    if remember != nil {
-                        Button("Разрешать всегда") {
-                            model.answerPermission(requestId: pending.requestId, allow: true, always: true)
-                        }
-                        .disabled(truncated)
-                    }
-                    Button("Отклонить") { model.answerPermission(requestId: pending.requestId, allow: false) }
-                }
-                .disabled(model.permissionBusy)
-                if let error = model.permissionError {
-                    Text(verbatim: UntrustedText.clean(error, limit: 80))
-                        .font(.caption).foregroundStyle(.red).lineLimit(2)
-                }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ChatTheme.approval)
-            .overlay(alignment: .leading) { Rectangle().fill(ChatTheme.amber).frame(width: 3) }
+            ApprovalCard(model: model, session: session, pending: pending)
         } else if session.status == .waiting && !session.hasChannel {
             Text(verbatim: "Ждёт одобрения в IDE")
                 .font(.callout)
@@ -160,41 +111,6 @@ struct QuickChatView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(ChatTheme.approval)
         }
-    }
-
-    private static let previewLimit = 4_000
-
-    /// Строки «что запомнится и где». `nil` — кнопки «Разрешать всегда» нет: правил нет или место
-    /// сохранения неизвестно (показать честно нельзя).
-    private static func rememberLines(_ items: [BridgeSession.RememberRule]) -> [(rules: String, place: String)]? {
-        guard !items.isEmpty else { return nil }
-        var lines: [(rules: String, place: String)] = []
-        for item in items {
-            let place: String
-            switch item.destination {
-            case "localSettings": place = "для этого проекта (только у тебя)"
-            case "projectSettings": place = "для этого проекта (для всех, попадёт в .claude/settings.json)"
-            case "userSettings": place = "для всех проектов"
-            case "session": place = "до конца сессии"
-            default: return nil
-            }
-            let rules = item.rules.map { UntrustedText.clean($0, limit: 300) }.joined(separator: ", ")
-            lines.append((rules, place))
-        }
-        return lines
-    }
-
-    /// Поле команды по её длине (грубо: ~52 символа в строке), но не выше 140 — дальше прокрутка.
-    private static func previewHeight(_ preview: String) -> CGFloat {
-        let lines = preview.split(separator: "\n", omittingEmptySubsequences: false)
-            .reduce(0) { $0 + max(1, ($1.count + 51) / 52) }
-        return min(140, CGFloat(lines) * 15 + 14)
-    }
-
-    /// Превью считается неполным, если оно длиннее лимита показа или кончается многоточием
-    /// (так обрезанный текст выглядит и на стороне Claude Code).
-    private static func isTruncated(_ preview: String) -> Bool {
-        preview.count > previewLimit || preview.hasSuffix("…") || preview.hasSuffix("...")
     }
 
     private var messageList: some View {

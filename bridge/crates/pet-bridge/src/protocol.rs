@@ -112,6 +112,7 @@ pub fn status_name(status: SessionStatus) -> &'static str {
         SessionStatus::Working => "working",
         SessionStatus::WaitingPermission => "waiting",
         SessionStatus::Done => "done",
+        SessionStatus::Error => "error",
     }
 }
 
@@ -135,7 +136,7 @@ pub fn sessions_snapshot(registry: &SessionRegistry) -> Vec<SessionDto> {
 }
 
 /// Статус питомца по всем сессиям, приоритет как у ChatGPT Pets:
-/// Needs input → Blocked → Ready → Running, иначе idle. `error` мост пока не выставляет.
+/// Needs input → Blocked (error) → Ready → Running, иначе idle.
 pub fn pet_status(sessions: &[SessionDto]) -> &'static str {
     const PRIORITY: [&str; 4] = ["waiting", "error", "done", "working"];
     PRIORITY
@@ -170,6 +171,10 @@ mod tests {
             pet_status(&[session("a", "done"), session("b", "waiting"), session("c", "working")]),
             "waiting"
         );
+        assert_eq!(pet_status(&[session("a", "working"), session("b", "error")]), "error");
+        assert_eq!(pet_status(&[session("a", "done"), session("b", "error")]), "error");
+        assert_eq!(pet_status(&[session("a", "error"), session("b", "waiting")]), "waiting");
+        assert_eq!(status_name(SessionStatus::Error), "error");
     }
 
     #[test]

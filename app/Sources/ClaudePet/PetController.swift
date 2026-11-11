@@ -20,6 +20,8 @@ final class PetController {
 
     /// Клик по питомцу без перетаскивания.
     var onClick: (() -> Void)?
+    /// Окно питомца сдвинулось (шаг, перетаскивание) — за ним переезжает пузырь одобрения.
+    var onMoved: (() -> Void)?
 
     private var status: PetStatus = .idle
     private var velocity = CGVector.zero            // pt/s, оси Cocoa (y вверх)
@@ -103,6 +105,7 @@ final class PetController {
         }
         lastDrag = (point, time)
         panel.setFrameOrigin(NSPoint(x: point.x - grabOffset.dx, y: point.y - grabOffset.dy))
+        onMoved?()
     }
 
     /// Клик без перетаскивания — открыть/закрыть Quick Chat. После перетаскивания: бросок (быстрая рука) —
@@ -172,7 +175,10 @@ final class PetController {
             origin.y = bounds.minY
             if wasAirborne { land() }
         }
-        if origin != panel.frame.origin { panel.setFrameOrigin(origin) }
+        if origin != panel.frame.origin {
+            panel.setFrameOrigin(origin)
+            onMoved?()
+        }
 
         if !wasAirborne { decide(time) }
     }

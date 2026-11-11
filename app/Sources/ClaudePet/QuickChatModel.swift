@@ -17,7 +17,9 @@ final class QuickChatModel {
     private(set) var messages: [BridgeClient.HistoryMessage] = []
     private(set) var feedback: Feedback?
     private(set) var permissionBusy = false
-    private(set) var permissionError: String?
+    private var permissionFailure: (requestId: String, message: String)?
+    /// Запрос, чей пузырь рядом с питомцем скрыт крестиком (сам запрос остаётся).
+    private var dismissedBubbleId: String?
     private(set) var bridgeRunning = false
     /// Растёт при каждом открытии панели — view по нему возвращает фокус в поле ввода.
     private(set) var focusTick = 0
@@ -90,6 +92,25 @@ final class QuickChatModel {
         isOpen && selectedId == sessionId
     }
 
+    /// Ошибка последней попытки ответить именно на этот запрос.
+    func permissionError(for requestId: String) -> String? {
+        permissionFailure?.requestId == requestId ? permissionFailure?.message : nil
+    }
+
+    /// Что показать пузырём у питомца: первая сессия с запросом, которую не скрыли и которой нет открытой в чате,
+    /// и сколько таких запросов ещё ждёт.
+    var bubble: (session: BridgeSession, pending: BridgeSession.PendingPermission, more: Int)? {
+        let waiting = sessions.filter {
+            $0.pendingPermission.map { $0.requestId != dismissedBubbleId } ?? false && !isShowing($0.id)
+        }
+        guard let first = waiting.first, let pending = first.pendingPermission else { return nil }
+        return (first, pending, waiting.count - 1)
+    }
+
+    func dismissBubble(requestId: String) {
+        dismissedBubbleId = requestId
+    }
+
     func select(_ id: String) {
         guard id != selectedId else { return }
         selectedId = id
@@ -103,7 +124,7 @@ final class QuickChatModel {
         historyTask?.cancel()
         messages = []
         feedback = nil
-        permissionError = nil
+        permissionFailure = nil
         historyKey = nil
     }
 
@@ -213,17 +234,17 @@ final class QuickChatModel {
 
     // MARK: - Одобрения
 
-    /// `requestId` берём из карточки, которую видел пользователь: одобряем именно показанный запрос,
-    /// а не тот, что оказался «текущим» к моменту клика.
-    func answerPermission(requestId: String, allow: Bool, always: Bool = false) {
-        guard let session = selected, !permissionBusy else { return }
+    /// `sessionId` и `requestId` берём из карточки, которую видел пользователь: одобряем именно показанный запрос
+    /// той сессии, чей он, а не выбранной в чате и не того, что оказался «текущим» к моменту клика.
+    func answerPermission(sessionId: String, requestId: String, allow: Bool, always: Bool = false) {
+        guard !permissionBusy else { return }
         permissionBusy = true
-        permissionError = nil
+        permissionFailure = nil
         Task {
-            let result = await bridge.send(.permission(sessionId: session.id, requestId: requestId, allow: allow, always: always))
+            let result = await bridge.send(.permission(sessionId: sessionId, requestId: requestId, allow: allow, always: always))
             permissionBusy = false
             if case .failure(let error) = result {
-                permissionError = error.message
+                permissionFailure = (requestId, error.message)
             }
             // При успехе карточка исчезнет сама: в следующем снимке pending_permission уже нет.
         }

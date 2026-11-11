@@ -172,6 +172,23 @@ mod tests {
     }
 
     #[test]
+    fn stop_failure_closes_interval_but_is_not_a_finished_task() {
+        let r = run(&[l("10:00:00", "UserPromptSubmit", "a"), l("10:04:00", "StopFailure", "a")], S);
+        assert_eq!((r.sessions, r.tasks, r.work_seconds), (1, 0, 240));
+        // Повторный запрос после сбоя: первый интервал закрыт сбоем, второй — обычным Stop.
+        let r = run(
+            &[
+                l("10:00:00", "UserPromptSubmit", "a"),
+                l("10:04:00", "StopFailure", "a"),
+                l("10:10:00", "UserPromptSubmit", "a"),
+                l("10:11:00", "Stop", "a"),
+            ],
+            S,
+        );
+        assert_eq!((r.sessions, r.tasks, r.work_seconds), (1, 1, 300));
+    }
+
+    #[test]
     fn new_prompt_before_stop_closes_at_last_event_before_it() {
         let r = run(
             &[

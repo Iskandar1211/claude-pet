@@ -185,6 +185,7 @@ fn status_label(s: SessionStatus) -> &'static str {
         SessionStatus::Working => "working",
         SessionStatus::WaitingPermission => "waiting",
         SessionStatus::Done => "done",
+        SessionStatus::Error => "error",
     }
 }
 

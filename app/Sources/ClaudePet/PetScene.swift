@@ -10,9 +10,17 @@ final class PetScene: SKScene {
         didSet { sprite.xScale = facingLeft ? -1 : 1 }
     }
 
+    /// Лимит почти исчерпан: в покое питомец «усталый». Работает, только если в листе есть ряд "tired" (см. `pose`).
+    var tired = false {
+        didSet { if tired != oldValue, let requestedState { play(requestedState, animated: lastAnimated) } }
+    }
+
     private var sheet: SpriteSheet
     private let sprite = SKSpriteNode()
+    /// Что просил PetController и что реально показано (`pose` может подменить ряд).
+    private var requestedState: String?
     private var currentState: String?
+    private var lastAnimated = true
 
     init(sheet: SpriteSheet, size: CGSize) {
         self.sheet = sheet
@@ -28,21 +36,35 @@ final class PetScene: SKScene {
 
     /// `animated = false` — статичный первый кадр (системная настройка «Уменьшение движения»).
     func play(_ state: String, animated: Bool) {
-        guard state != currentState else { return }
-        let textures = sheet.textures(for: state)
+        requestedState = state
+        lastAnimated = animated
+        let pose = pose(for: state)
+        guard pose != currentState else { return }
+        let textures = sheet.textures(for: pose)
         guard let first = textures.first else { return }
-        currentState = state
+        currentState = pose
         sprite.removeAction(forKey: "anim")
         sprite.texture = first
         if animated, textures.count > 1 {
-            sprite.run(Self.animation(state, textures), withKey: "anim")
+            sprite.run(Self.animation(pose, textures), withKey: "anim")
+        }
+    }
+
+    /// Какой ряд листа показать для состояния. Сюда подключаются будущие ряды: появится в разметке
+    /// `"tired"` — усталость в покое включится сама; пропадёт `"error"` — ошибка покажется обычным покоем
+    /// (бейдж под ногами всё равно скажет об ошибке). Ряды, которых нет, подменой на другую позу не заменяются.
+    private func pose(for state: String) -> String {
+        switch state {
+        case "idle" where tired && sheet.hasState("tired"): "tired"
+        case "error" where !sheet.hasState("error"): "idle"
+        default: state
         }
     }
 
     /// Другой персонаж: то же состояние, но кадры нового листа.
     func use(_ sheet: SpriteSheet, animated: Bool) {
         self.sheet = sheet
-        guard let state = currentState else { return }
+        guard let state = requestedState else { return }
         currentState = nil
         play(state, animated: animated)
     }
@@ -87,7 +109,7 @@ final class PetScene: SKScene {
             // Удивилась, вскрикнула — и паникует, пока держат.
             return .sequence([frames([0, 1], 0.2), .repeatForever(frames([2, 3], 0.25))])
         default:
-            // error: злость нарастает по кадрам.
+            // error (и будущий tired): медленная покадровая смена; у error злость нарастает по кадрам.
             return .repeatForever(.animate(with: textures, timePerFrame: 0.4))
         }
     }

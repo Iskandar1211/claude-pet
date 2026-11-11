@@ -9,6 +9,8 @@ pub enum SessionStatus {
     Working,
     WaitingPermission,
     Done,
+    /// Ход оборвался из-за ошибки API (`StopFailure`). Снимается следующим Working-событием или `SessionEnd`.
+    Error,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -48,11 +50,13 @@ pub fn apply_hook_event(
             return SessionStatus::Working;
         }
         "Stop" => return SessionStatus::Done,
+        "StopFailure" => return SessionStatus::Error,
         "Notification" => {
             if is_permission_notification(notification_type, notification) {
                 return SessionStatus::WaitingPermission;
             }
-            if status == SessionStatus::Working {
+            // Ошибку не затирает «Claude ждёт ввода» (idle_prompt приходит уже после сбоя).
+            if matches!(status, SessionStatus::Working | SessionStatus::Error) {
                 return status;
             }
             return SessionStatus::Done;
@@ -64,6 +68,18 @@ pub fn apply_hook_event(
             status
         }
         _ => status,
+    }
+}
+
+/// Короткая понятная причина для `last_message` сессии со статусом «ошибка»; `kind` — поле `error` у `StopFailure`.
+pub fn error_reason(kind: Option<&str>) -> String {
+    match kind {
+        Some("rate_limit") => "ошибка: лимит запросов".into(),
+        Some("overloaded") => "ошибка: сервер перегружен".into(),
+        Some("authentication_failed" | "oauth_org_not_allowed") => "ошибка: нужна авторизация".into(),
+        Some("billing_error" | "account_on_hold") => "ошибка: проблема с оплатой".into(),
+        Some(other) if !other.is_empty() => format!("ошибка API ({})", crate::transcript::one_line(other, 40)),
+        _ => "ошибка API".into(),
     }
 }
 
@@ -119,6 +135,40 @@ mod tests {
             apply_hook_event(SessionStatus::Working, "Stop", None, None),
             SessionStatus::Done
         );
+    }
+
+    #[test]
+    fn stop_failure_sets_error_and_next_work_event_clears_it() {
+        let err = apply_hook_event(SessionStatus::Working, "StopFailure", None, None);
+        assert_eq!(err, SessionStatus::Error);
+        for ev in ["UserPromptSubmit", "PreToolUse", "PostToolUse"] {
+            assert_eq!(apply_hook_event(err, ev, None, None), SessionStatus::Working, "{ev}");
+        }
+        assert_eq!(apply_hook_event(err, "SessionEnd", None, None), SessionStatus::Idle);
+    }
+
+    #[test]
+    fn error_survives_idle_notification_and_session_start() {
+        let err = SessionStatus::Error;
+        assert_eq!(apply_hook_event(err, "Notification", Some("idle_prompt"), Some("Claude is waiting")), err);
+        assert_eq!(apply_hook_event(err, "SessionStart", None, None), err);
+        // Новый запрос разрешения — это уже другое состояние.
+        assert_eq!(
+            apply_hook_event(err, "Notification", Some("permission_prompt"), None),
+            SessionStatus::WaitingPermission
+        );
+        assert_eq!(apply_hook_event(err, "Stop", None, None), SessionStatus::Done);
+    }
+
+    #[test]
+    fn error_reason_known_and_fallback() {
+        assert_eq!(error_reason(Some("rate_limit")), "ошибка: лимит запросов");
+        assert_eq!(error_reason(Some("overloaded")), "ошибка: сервер перегружен");
+        assert_eq!(error_reason(Some("oauth_org_not_allowed")), "ошибка: нужна авторизация");
+        assert_eq!(error_reason(Some("billing_error")), "ошибка: проблема с оплатой");
+        assert_eq!(error_reason(Some("server_error")), "ошибка API (server_error)");
+        assert_eq!(error_reason(Some("")), "ошибка API");
+        assert_eq!(error_reason(None), "ошибка API");
     }
 
     #[test]

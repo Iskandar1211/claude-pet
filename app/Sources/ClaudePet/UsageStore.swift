@@ -5,6 +5,24 @@ import Foundation
 enum UsageStore {
     /// Свежий `usage.json` из терминала важнее эвристики по сессиям.
     private static let fileFreshFor: TimeInterval = 3 * 60
+    /// Без терминала `usage.json` не обновляется — старый процент считается устаревшим (бейдж сереет).
+    static let staleAfter: TimeInterval = 5 * 60
+    /// С какого процента лимит считается опасным: бейдж предупреждает, питомец в покое устаёт.
+    static let warnAtPct: Double = 90
+
+    /// Лимит почти исчерпан: данные свежие, окно не сброшено, процент >= `warnAtPct`.
+    static func isNearLimit(_ usage: BridgeClient.Usage?, now: Date = Date()) -> Bool {
+        guard let usage else { return false }
+        return usage.fiveHourPct >= warnAtPct
+            && usage.resetsAt > now
+            && now.timeIntervalSince(usage.updatedAt) <= staleAfter
+    }
+
+    /// «до сброса 1 ч 20 мин» / «12 мин».
+    static func untilText(_ date: Date, now: Date = Date()) -> String {
+        let minutes = max(1, Int(date.timeIntervalSince(now) / 60))
+        return minutes >= 60 ? "\(minutes / 60) ч \(minutes % 60) мин" : "\(minutes) мин"
+    }
 
     private static let path = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude-pet/usage.json")
@@ -59,6 +77,7 @@ enum UsageStore {
             return message.contains("session limit")
                 || message.contains("rate limit")
                 || message.contains("usage limit")
+                || message.contains("лимит запросов") // фраза моста для StopFailure rate_limit
                 || message.contains("лимит сессии")
                 || message.contains("лимит использования")
         }

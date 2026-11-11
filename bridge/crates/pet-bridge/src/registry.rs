@@ -12,7 +12,7 @@ use crate::liveness::{process_alive, session_alive};
 use crate::paths::{channels_dir, pending_dir, pid_from_socket, tokens_dir};
 use crate::pending::{clear_pending_file, load_pending, save_pending};
 use crate::permission_hook::{hook_request_pid, is_hook_request};
-use crate::state::{apply_hook_event, apply_transcript_signal, PendingPermission, SessionStatus};
+use crate::state::{apply_hook_event, apply_transcript_signal, error_reason, PendingPermission, SessionStatus};
 use crate::transcript::{one_line, parse_transcript_line};
 
 /// events.jsonl больше этого размера обрезаем до хвоста `EVENTS_KEEP_BYTES`.
@@ -195,6 +195,9 @@ impl SessionRegistry {
             ev.notification_type.as_deref(),
             ev.notification.as_deref(),
         );
+        if ev.event == "StopFailure" {
+            entry.last_message = Some(error_reason(ev.error.as_deref()));
+        }
         let pending = load_pending(&ev.session_id);
         if pending_cleared_by(&ev.event, entry.status, pending.as_ref()) {
             entry.pending_permission = None;
@@ -390,8 +393,11 @@ impl SessionRegistry {
                 rec.pending_permission = None;
                 clear_pending_file(id);
             }
-            if let Some(chat) = parse_transcript_line(&line) {
-                rec.last_message = Some(format!("{}: {}", chat.role, chat.preview));
+            // Пока сессия в ошибке, причина из StopFailure важнее реплик транскрипта (там тот же сбой сырым текстом).
+            if rec.status != SessionStatus::Error {
+                if let Some(chat) = parse_transcript_line(&line) {
+                    rec.last_message = Some(format!("{}: {}", chat.role, chat.preview));
+                }
             }
             buf.clear();
         }
@@ -417,6 +423,8 @@ fn pending_cleared_by(event: &str, status: SessionStatus, pending: Option<&Pendi
     match status {
         SessionStatus::Working => !(from_hook && event == "PreToolUse"),
         SessionStatus::Done => from_hook && event == "Stop",
+        // Ход оборван ошибкой — запрос разрешения уже неактуален (в том числе из Channel).
+        SessionStatus::Error => event == "StopFailure",
         _ => false,
     }
 }
@@ -541,6 +549,10 @@ mod tests {
         assert!(!pending_cleared_by("Notification", SessionStatus::Done, Some(&hook)));
         assert!(!pending_cleared_by("Stop", SessionStatus::Done, Some(&channel)));
         assert!(!pending_cleared_by("Notification", SessionStatus::WaitingPermission, Some(&hook)));
+        let error = SessionStatus::Error;
+        assert!(pending_cleared_by("StopFailure", error, Some(&hook)));
+        assert!(pending_cleared_by("StopFailure", error, Some(&channel)));
+        assert!(!pending_cleared_by("Notification", error, Some(&hook)));
     }
 
     fn session_start_line(session_id: &str) -> String {
@@ -740,6 +752,31 @@ mod tests {
         drop(file);
         reg.ingest_events(&path).unwrap();
         assert_eq!(reg.get(sid).unwrap().status, SessionStatus::Done);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stop_failure_marks_error_with_reason_until_next_prompt() {
+        let dir = temp_dir("stop-failure");
+        let path = dir.join("events.jsonl");
+        let sid = "eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "{}", user_prompt_line(sid)).unwrap();
+        writeln!(file, r#"{{"event":"StopFailure","session_id":"{sid}","error":"rate_limit"}}"#).unwrap();
+        drop(file);
+
+        let mut reg = SessionRegistry::new();
+        reg.ingest_events(&path).unwrap();
+        let rec = reg.get(sid).unwrap();
+        assert_eq!(rec.status, SessionStatus::Error);
+        assert_eq!(rec.last_message.as_deref(), Some("ошибка: лимит запросов"));
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, "{}", user_prompt_line(sid)).unwrap();
+        drop(file);
+        reg.ingest_events(&path).unwrap();
+        assert_eq!(reg.get(sid).unwrap().status, SessionStatus::Working);
 
         let _ = fs::remove_dir_all(dir);
     }

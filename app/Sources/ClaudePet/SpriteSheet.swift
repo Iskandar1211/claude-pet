@@ -55,6 +55,8 @@ final class SpriteSheet {
         self.config = config
     }
 
+    func hasState(_ state: String) -> Bool { config.states[state] != nil }
+
     /// Кадры состояния; пустой массив, если такого состояния в листе нет.
     func textures(for state: String) -> [SKTexture] {
         if let cached = cache[state] { return cached }

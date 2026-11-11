@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var pet: PetController?
+    private var petScene: PetScene?
     private let toggleItem = NSMenuItem(title: "Скрыть питомца", action: #selector(togglePet), keyEquivalent: "")
     private var statusItems: [NSMenuItem] = []
     private var characterItems: [NSMenuItem] = []
@@ -12,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessionItems: [NSMenuItem] = []
     private lazy var quickChatModel = QuickChatModel(bridge: bridge)
     private lazy var quickChat = QuickChatController(model: quickChatModel)
+    private var approvalBubble: ApprovalBubbleController?
     private let bridgeItem = NSMenuItem(title: "Мост: запускается…", action: nil, keyEquivalent: "")
     private let hooksItem = NSMenuItem(title: "", action: #selector(toggleHooks), keyEquivalent: "")
     private var hooksStatus: HooksInstaller.Status?
@@ -42,12 +44,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             usageBadge?.layoutInChrome()
         }
         usageBadge.onRefreshRequested = { [weak self] in self?.refreshUsageBadge() }
+        petScene = scene
         let controller = PetController(panel: panel, scene: scene)
         view.controller = controller
         controller.onClick = { [weak self, weak controller] in
             guard let panel = controller?.panel else { return }
             self?.quickChat.toggle(near: panel)
         }
+        let bubble = ApprovalBubbleController(model: quickChatModel, pet: panel)
+        controller.onMoved = { [weak bubble] in bubble?.follow() }
+        approvalBubble = bubble
         view.menu = makePetContextMenu()
         view.presentScene(scene)
         controller.spawn()
@@ -137,8 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Лимит из `usage.json` — не только из моста (в `.app` иногда старый `pet-bridge`).
     private func refreshUsageBadge() {
+        // Ошибка сессии важнее лимита: капсула покажет её, а усталость питомца считается по лимиту отдельно.
+        usageBadge.setError(lastSessions.first { $0.status == .error }.map { UntrustedText.clean($0.lastMessage ?? "ошибка API", limit: 80) })
         // Окно сброшено — effective пуст; тогда капсула показывает «—» по последним известным данным.
-        guard let usage = UsageStore.effective(sessions: lastSessions) ?? UsageStore.load() else { return }
+        let usage = UsageStore.effective(sessions: lastSessions) ?? UsageStore.load()
+        petScene?.tired = UsageStore.isNearLimit(usage)
+        guard let usage else { return }
         usageBadge.update(usage)
     }
 
@@ -282,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             panel.orderFrontRegardless()
             toggleItem.title = "Скрыть питомца"
         }
+        approvalBubble?.follow()
     }
 
     @objc private func selectCharacter(_ sender: NSMenuItem) {
