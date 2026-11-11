@@ -30,7 +30,7 @@ enum Commands {
     },
     /// Hooks питомца во всех проектах: ~/.claude/settings.json (с бэкапом)
     Hooks {
-        #[arg(value_parser = ["install", "uninstall", "status"])]
+        #[arg(value_parser = ["install", "uninstall", "status", "refresh"])]
         action: String,
     },
     /// Команда claude-pet в ~/.local/bin: Claude Code с Channel питомца из любой папки
@@ -197,6 +197,7 @@ const HOOK_SCRIPT: &str = include_str!("../../../../prototype/hooks/log-event.sh
 const STATUSLINE_SCRIPT: &str = include_str!("../../../../prototype/hooks/statusline.sh");
 
 /// `status` печатает одно слово (`installed` | `partial` | `not_installed`) — его читает приложение.
+/// `refresh` обновляет только копию моста для hook'а `PermissionRequest` (и только если запись уже стоит).
 fn hooks(action: &str) -> Result<()> {
     use pet_bridge::install::{self, HooksStatus, Paths};
     let paths = Paths::user();
@@ -210,9 +211,18 @@ fn hooks(action: &str) -> Result<()> {
             if !has_jq {
                 anyhow::bail!("нужен jq: в macOS 15+ он есть в системе, на macOS 14 — `brew install jq`");
             }
-            install::install(&paths, HOOK_SCRIPT, STATUSLINE_SCRIPT)?
+            let exe = std::env::current_exe().context("путь к pet-bridge")?;
+            install::install(&paths, HOOK_SCRIPT, STATUSLINE_SCRIPT, &exe)?
         }
         "uninstall" => install::uninstall(&paths)?,
+        "refresh" => {
+            // При старте приложения: только копия бинаря для hook'а PermissionRequest, settings.json не трогаем.
+            let exe = std::env::current_exe().context("путь к pet-bridge")?;
+            if install::refresh(&paths, &exe)? {
+                println!("Копия моста обновлена: {}", paths.bridge.display());
+            }
+            return Ok(());
+        }
         _ => {
             let word = match install::current_status(&paths)? {
                 HooksStatus::Installed => "installed",

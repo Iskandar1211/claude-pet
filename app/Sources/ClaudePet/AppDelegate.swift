@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         bridge.start()
 
         refreshLauncherChannelPath()
+        refreshHooksBridgeCopy()
         onboarding.model.onHooksChanged = { [weak self] status in self?.showHooksStatus(status) }
         onboarding.showOnFirstLaunch()
     }
@@ -91,6 +92,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let channel = Bundle.main.url(forAuxiliaryExecutable: "pet-channel") else { return }
         let (ok, output) = HooksInstaller.runBridge(["launcher", "refresh", channel.path])
         if !ok { NSLog("ClaudePet: не удалось обновить путь к Channel: \(output)") }
+    }
+
+    /// Копия моста ~/.claude-pet/bin/pet-bridge для hook'а PermissionRequest устаревает при обновлении приложения.
+    /// Мост обновляет только саму копию и только если запись hook'а уже стоит; ошибку — только в лог.
+    private func refreshHooksBridgeCopy() {
+        let (ok, output) = HooksInstaller.runBridge(["hooks", "refresh"])
+        if !ok { NSLog("ClaudePet: не удалось обновить копию моста для hooks: \(output)") }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

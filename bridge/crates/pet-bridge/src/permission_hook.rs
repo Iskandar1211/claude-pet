@@ -226,6 +226,23 @@ pub fn write_verdict_in(dir: &Path, request_id: &str, allow: bool) -> Result<()>
     Ok(())
 }
 
+/// Вердикт питомца на запрос hook'а: пишем только если pending сессии — ровно этот запрос
+/// (иначе вердикты можно было бы класть на произвольные id). Pending снимаем ПОСЛЕ записи вердикта:
+/// hook сначала ищет вердикт, а уже потом смотрит, не пропал ли pending.
+pub fn answer_hook_request(session_id: &str, request_id: &str, allow: bool) -> Result<()> {
+    answer_hook_request_in(&HookPaths::user(), session_id, request_id, allow)
+}
+
+pub fn answer_hook_request_in(paths: &HookPaths, session_id: &str, request_id: &str, allow: bool) -> Result<()> {
+    let current = load_pending_in(&paths.pending_dir, session_id).is_some_and(|p| p.request_id == request_id);
+    if !current {
+        anyhow::bail!("запрос уже неактуален");
+    }
+    write_verdict_in(&paths.verdicts_dir, request_id, allow)?;
+    clear_own_pending(&paths.pending_dir, session_id, request_id);
+    Ok(())
+}
+
 /// Признак живости `serve`: pid-файл на время работы. Drop убирает файл, если он всё ещё наш.
 pub struct ServePidFile {
     path: PathBuf,
@@ -512,6 +529,29 @@ mod tests {
         assert_eq!(hook_request_pid(&rid), Some(std::process::id()));
         assert!(verdict_path_in(Path::new("/tmp"), &rid).is_some());
         assert_eq!(hook_request_pid("abc"), None);
+    }
+
+    #[test]
+    fn answer_matching_request_writes_verdict_then_clears_pending() {
+        let paths = temp_paths("answer-ok");
+        let perm = PendingPermission { request_id: "hook-1-2".into(), tool_name: "Bash".into(), input_preview: "ls".into() };
+        save_pending_in(&paths.pending_dir, SID, &perm).unwrap();
+        answer_hook_request_in(&paths, SID, "hook-1-2", true).unwrap();
+        assert_eq!(read_verdict(&paths.verdicts_dir.join("hook-1-2.json")), Some(Some(Behavior::Allow)));
+        assert_eq!(load_pending_in(&paths.pending_dir, SID), None);
+    }
+
+    #[test]
+    fn answer_stale_or_missing_request_is_error_without_verdict() {
+        let paths = temp_paths("answer-stale");
+        // Pending нет.
+        assert!(answer_hook_request_in(&paths, SID, "hook-1-2", true).is_err());
+        // Pending другого запроса остаётся нетронутым.
+        let other = PendingPermission { request_id: "hook-3-4".into(), tool_name: "Bash".into(), input_preview: "x".into() };
+        save_pending_in(&paths.pending_dir, SID, &other).unwrap();
+        assert!(answer_hook_request_in(&paths, SID, "hook-1-2", false).is_err());
+        assert_eq!(load_pending_in(&paths.pending_dir, SID), Some(other));
+        assert!(!paths.verdicts_dir.exists());
     }
 
     #[test]

@@ -9,6 +9,7 @@ use pet_bridge::protocol::{
     pet_status, sessions_snapshot, Command, Event, Request, SessionDto, HISTORY_MAX_LIMIT,
     PROTOCOL_VERSION,
 };
+use pet_bridge::permission_hook::{answer_hook_request, HOOK_REQUEST_PREFIX};
 use pet_bridge::{
     build_http_client, channel_token_for, clear_pending_file, load_or_create_config, read_chat, read_usage,
     resolve_session_id, send_channel_permission, send_to_session_confirmed, usage_path, Bridge, DeliveryResult,
@@ -151,6 +152,10 @@ async fn history(bridge: &Bridge, id: &str, session: &str, limit: usize) -> Resu
     Ok(Event::History { id: id.to_string(), session_id: sid, messages })
 }
 
+fn is_hook_request(request_id: &str) -> bool {
+    request_id.starts_with(HOOK_REQUEST_PREFIX)
+}
+
 async fn permission(
     bridge: &mut Bridge,
     cfg: &PetConfig,
@@ -160,6 +165,12 @@ async fn permission(
     allow: bool,
 ) -> Outcome {
     let sid = resolve_session_id(bridge.registry(), session)?;
+    if is_hook_request(request_id) {
+        // Запрос hook'а `PermissionRequest` (сессия IDE без Channel): вердикт файлом, ответит hook.
+        answer_hook_request(&sid, request_id, allow)?;
+        bridge.clear_pending_permission(&sid);
+        return Ok((Some("hook"), None));
+    }
     let rec = bridge.registry().get(&sid).context("сессия пропала из реестра")?;
     let port = rec.channel_port.context("у сессии нет Channel (запусти claude-pet)")?;
     let token = channel_token_for(rec, &cfg.channel_token);

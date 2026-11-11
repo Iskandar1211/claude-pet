@@ -59,7 +59,11 @@ JSON Lines: один JSON-объект на строку, UTF-8, `\n` в кон�
 {"type":"result","id":"8","ok":false,"error":"у сессии нет Channel (запусти claude-pet)"}
 ```
 
-`route`: `channel` | `inbox`; `delivery`: `sent` | `confirmed` | `unconfirmed` (как у `pet-bridge send`).
+`route`: `channel` | `inbox` | `hook`; `delivery`: `sent` | `confirmed` | `unconfirmed` (как у `pet-bridge send`). `hook` — ответ на `permission` для запроса hook'а (см. ниже), `delivery` в нём нет.
+
+#### Запрос от hook'а `PermissionRequest`
+
+`pending_permission` может прийти и от hook'а `PermissionRequest` (`pet-bridge hook permission`, только сессии расширения VS Code / Cursor): его `request_id` начинается с `hook-`, а у сессии при этом может не быть Channel (`has_channel:false`). Команда `permission` для такого id не требует Channel: мост проверяет, что pending сессии — ровно этот запрос (иначе `ok:false`, «запрос уже неактуален»), пишет файл вердикта `~/.claude-pet/verdicts/<request_id>.json`, только потом снимает pending и отвечает `route:"hook"`. Hook забирает вердикт и печатает решение Claude Code; диалог IDE остаётся, побеждает первый ответ.
 
 ### `history` — последние реплики сессии (дополнение v1 от 2026-10-22)
 
