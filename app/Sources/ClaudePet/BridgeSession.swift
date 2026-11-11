@@ -43,6 +43,12 @@ struct BridgeSession: Decodable, Equatable, Identifiable, Sendable {
     let lastMessage: String?
     let hasChannel: Bool
     let pendingPermission: PendingPermission?
+    /// Модель, effort и режим из транскрипта — недоверенный текст; nil, пока мост их не увидел.
+    let modelName: String?
+    let effort: String?
+    let permissionMode: String?
+    /// Сколько субагентов сейчас работает.
+    let subagents: Int
 
     var id: String { sessionId }
 
@@ -53,6 +59,9 @@ struct BridgeSession: Decodable, Equatable, Identifiable, Sendable {
         case lastMessage = "last_message"
         case hasChannel = "has_channel"
         case pendingPermission = "pending_permission"
+        case modelName = "model_name"
+        case effort, subagents
+        case permissionMode = "permission_mode"
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +75,10 @@ struct BridgeSession: Decodable, Equatable, Identifiable, Sendable {
         lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
         hasChannel = try c.decode(Bool.self, forKey: .hasChannel)
         pendingPermission = try c.decodeIfPresent(PendingPermission.self, forKey: .pendingPermission)
+        modelName = try c.decodeIfPresent(String.self, forKey: .modelName)
+        effort = try c.decodeIfPresent(String.self, forKey: .effort)
+        permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode)
+        subagents = try c.decodeIfPresent(Int.self, forKey: .subagents) ?? 0
     }
 }
 
@@ -74,6 +87,26 @@ extension BridgeSession {
     var displayName: String {
         guard let cwd, let name = cwd.split(separator: "/").last else { return shortId }
         return UntrustedText.clean(String(name), limit: 40)
+    }
+
+    /// Строка состояния, как в панели Claude Code: «Fable 5.2 · Medium · Auto · 2 agents»; nil — показывать нечего.
+    var statusLine: String? {
+        var parts: [String] = []
+        if let modelName { parts.append(UntrustedText.clean(modelName, limit: 30)) }
+        if let effort { parts.append(UntrustedText.clean(effort, limit: 12).capitalized) }
+        if let permissionMode {
+            // Названия режимов — как в переключателе расширения.
+            switch permissionMode {
+            case "default": parts.append("Manual")
+            case "acceptEdits": parts.append("Edit automatically")
+            case "plan": parts.append("Plan")
+            case "auto": parts.append("Auto")
+            case "bypassPermissions": parts.append("Bypass permissions")
+            default: parts.append(UntrustedText.clean(permissionMode, limit: 20))
+            }
+        }
+        if subagents > 0 { parts.append(subagents == 1 ? "1 agent" : "\(subagents) agents") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// Откуда сессия; `claude-vscode` — это и VS Code, и Cursor.

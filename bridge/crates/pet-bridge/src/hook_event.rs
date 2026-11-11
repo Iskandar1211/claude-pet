@@ -12,6 +12,8 @@ pub struct HookEvent {
     pub notification_type: Option<String>,
     /// Только у `StopFailure`: тип ошибки API (`rate_limit`, `overloaded`, …).
     pub error: Option<String>,
+    /// Только у `SubagentStart` / `SubagentStop`: идентификатор субагента.
+    pub agent_id: Option<String>,
 }
 
 /// Имена hook-событий Claude Code (регистр важен). Агент Cursor тоже запускает hooks из
@@ -26,6 +28,7 @@ const CLAUDE_CODE_EVENTS: &[&str] = &[
     "Notification",
     "Stop",
     "StopFailure",
+    "SubagentStart",
     "SubagentStop",
     "PreCompact",
 ];
@@ -52,5 +55,16 @@ mod tests {
     fn error_field_is_optional() {
         let ev: HookEvent = serde_json::from_str(r#"{"event":"Stop","session_id":"s"}"#).unwrap();
         assert_eq!(ev.error, None);
+    }
+
+    #[test]
+    fn parses_agent_id_of_subagent_events() {
+        let ev: HookEvent =
+            serde_json::from_str(r#"{"event":"SubagentStart","session_id":"s","agent_id":"a1"}"#).unwrap();
+        assert_eq!(ev.agent_id.as_deref(), Some("a1"));
+        assert!(ev.is_claude_code());
+        let ev: HookEvent = serde_json::from_str(r#"{"event":"SubagentStop","session_id":"s"}"#).unwrap();
+        assert_eq!(ev.agent_id, None);
+        assert!(ev.is_claude_code());
     }
 }

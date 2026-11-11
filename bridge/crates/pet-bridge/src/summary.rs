@@ -279,4 +279,19 @@ mod tests {
         let p = std::env::temp_dir().join("pet-summary-definitely-missing.jsonl");
         assert_eq!(summarize_file(&p, 0).unwrap(), Summary::default());
     }
+
+    #[test]
+    fn subagent_events_are_not_tasks() {
+        let lines = [
+            l("10:00:00", "UserPromptSubmit", "a"),
+            l("10:00:10", "SubagentStart", "a"),
+            l("10:00:50", "SubagentStop", "a"),
+            l("10:01:00", "Stop", "a"),
+            // Только субагент без промпта: ни сессии, ни задачи.
+            l("10:02:00", "SubagentStart", "b"),
+            l("10:02:30", "SubagentStop", "b"),
+        ];
+        let s = run(&lines, S);
+        assert_eq!((s.sessions, s.tasks, s.work_seconds), (1, 1, 60));
+    }
 }

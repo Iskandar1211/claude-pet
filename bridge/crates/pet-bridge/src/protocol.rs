@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::registry::SessionRegistry;
 use crate::state::{PendingPermission, SessionStatus};
+use crate::transcript::model_display_name;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -18,6 +19,18 @@ pub struct SessionDto {
     pub last_message: Option<String>,
     pub has_channel: bool,
     pub pending_permission: Option<PendingPermission>,
+    /// Сырой id модели, `model_name` — для показа; `effort` и `permission_mode` — сырые строки.
+    /// Пустые не выводятся; все четыре — недоверенный текст из транскрипта.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    /// Число работающих субагентов, 0 если нет.
+    pub subagents: usize,
 }
 
 /// Запись чата в `history`, как в Claude Code: `kind` = `text` (реплика целиком), `tool` (вызов
@@ -129,6 +142,11 @@ pub fn sessions_snapshot(registry: &SessionRegistry) -> Vec<SessionDto> {
             last_message: s.last_message.clone(),
             has_channel: s.channel_port.is_some(),
             pending_permission: s.pending_permission.clone(),
+            model: s.model.clone(),
+            model_name: s.model.as_deref().map(model_display_name),
+            effort: s.effort.clone(),
+            permission_mode: s.permission_mode.clone(),
+            subagents: s.subagent_count(),
         })
         .collect();
     sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
@@ -159,6 +177,11 @@ mod tests {
             last_message: None,
             has_channel: false,
             pending_permission: None,
+            model: None,
+            model_name: None,
+            effort: None,
+            permission_mode: None,
+            subagents: 0,
         }
     }
 
@@ -187,6 +210,21 @@ mod tests {
         assert!(line.starts_with(r#"{"type":"sessions","pet_status":"working","sessions":[{"session_id":"aaaaaaaa-1111","short_id":"aaaaaaaa""#));
         assert!(!line.contains('\n'));
         assert!(!line.contains("token") && !line.contains("socket") && !line.contains("transcript"));
+    }
+
+    #[test]
+    fn session_serializes_new_fields_and_omits_empty() {
+        let bare = serde_json::to_string(&session("s", "idle")).unwrap();
+        assert!(!bare.contains("model") && !bare.contains("effort") && !bare.contains("permission_mode"));
+        assert!(bare.contains(r#""subagents":0"#));
+        let mut dto = session("s", "working");
+        dto.model = Some("claude-fable-5-2".into());
+        dto.model_name = Some("Fable 5.2".into());
+        dto.permission_mode = Some("auto".into());
+        dto.subagents = 2;
+        let line = serde_json::to_string(&dto).unwrap();
+        assert!(line.ends_with(r#","model":"claude-fable-5-2","model_name":"Fable 5.2","permission_mode":"auto","subagents":2}"#), "{line}");
+        assert!(!line.contains("effort"));
     }
 
     #[test]

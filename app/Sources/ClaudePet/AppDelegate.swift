@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         bridge.start()
 
+        Attachments.removeStalePastes()
         refreshLauncherChannelPath()
         refreshHooksBridgeCopy()
         onboarding.model.onHooksChanged = { [weak self] status in self?.showHooksStatus(status) }
