@@ -30,15 +30,26 @@ enum Commands {
     },
     /// Hooks питомца во всех проектах: ~/.claude/settings.json (с бэкапом)
     Hooks {
-        #[arg(value_parser = ["install", "uninstall", "status"])]
+        #[arg(value_parser = ["install", "uninstall", "status", "refresh"])]
         action: String,
     },
     /// Команда claude-pet в ~/.local/bin: Claude Code с Channel питомца из любой папки
     Launcher {
-        #[arg(value_parser = ["install", "uninstall", "status"])]
+        #[arg(value_parser = ["install", "uninstall", "status", "refresh"])]
         action: String,
-        /// Абсолютный путь к pet-channel (для install)
+        /// Абсолютный путь к pet-channel (для install и refresh)
         channel: Option<std::path::PathBuf>,
+    },
+    /// Hook Claude Code: `hook permission` — событие PermissionRequest (ответ из питомца для сессий IDE)
+    Hook {
+        #[arg(value_parser = ["permission"])]
+        event: String,
+    },
+    /// Сводка дня из events.jsonl: одна строка JSON (sessions, tasks, work_seconds, partial)
+    Summary {
+        /// Начало интервала, unix-секунды
+        #[arg(long)]
+        since: i64,
     },
     /// Протокол для Swift-приложения: JSON-строки в stdout/stdin (bridge/PROTOCOL.md)
     Serve,
@@ -78,6 +89,14 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Serve => serve::run().await?,
+        Commands::Hook { .. } => hook_permission(),
+        Commands::Summary { since } => {
+            let s = pet_bridge::summary::summarize_file(&pet_bridge::events_log(), since)?;
+            println!(
+                r#"{{"sessions":{},"tasks":{},"work_seconds":{},"partial":{}}}"#,
+                s.sessions, s.tasks, s.work_seconds, s.partial
+            );
+        }
         Commands::Hooks { action } => hooks(&action)?,
         Commands::Launcher { action, channel } => launcher(&action, channel)?,
         Commands::Send { session, text } => {
@@ -166,7 +185,25 @@ fn status_label(s: SessionStatus) -> &'static str {
         SessionStatus::Working => "working",
         SessionStatus::WaitingPermission => "waiting",
         SessionStatus::Done => "done",
+        SessionStatus::Error => "error",
     }
+}
+
+/// Всегда код 0: решение — строка в stdout, без неё Claude Code показывает обычный диалог.
+fn hook_permission() {
+    use std::io::{Read, Write};
+    use pet_bridge::permission_hook::{run_permission_hook, HookPaths, WaitLimits};
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        return;
+    }
+    let entrypoint = std::env::var("CLAUDE_CODE_ENTRYPOINT").ok();
+    let Some(line) = run_permission_hook(&input, entrypoint.as_deref(), &HookPaths::user(), WaitLimits::default())
+    else {
+        return;
+    };
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}").and_then(|()| out.flush());
 }
 
 /// Скрипт hook'а вшит в бинарник — установленная версия совпадает с репозиторием.
@@ -174,6 +211,7 @@ const HOOK_SCRIPT: &str = include_str!("../../../../prototype/hooks/log-event.sh
 const STATUSLINE_SCRIPT: &str = include_str!("../../../../prototype/hooks/statusline.sh");
 
 /// `status` печатает одно слово (`installed` | `partial` | `not_installed`) — его читает приложение.
+/// `refresh` обновляет только копию моста для hook'а `PermissionRequest` (и только если запись уже стоит).
 fn hooks(action: &str) -> Result<()> {
     use pet_bridge::install::{self, HooksStatus, Paths};
     let paths = Paths::user();
@@ -187,9 +225,18 @@ fn hooks(action: &str) -> Result<()> {
             if !has_jq {
                 anyhow::bail!("нужен jq: в macOS 15+ он есть в системе, на macOS 14 — `brew install jq`");
             }
-            install::install(&paths, HOOK_SCRIPT, STATUSLINE_SCRIPT)?
+            let exe = std::env::current_exe().context("путь к pet-bridge")?;
+            install::install(&paths, HOOK_SCRIPT, STATUSLINE_SCRIPT, &exe)?
         }
         "uninstall" => install::uninstall(&paths)?,
+        "refresh" => {
+            // При старте приложения: только копия бинаря для hook'а PermissionRequest, settings.json не трогаем.
+            let exe = std::env::current_exe().context("путь к pet-bridge")?;
+            if install::refresh(&paths, &exe)? {
+                println!("Копия моста обновлена: {}", paths.bridge.display());
+            }
+            return Ok(());
+        }
         _ => {
             let word = match install::current_status(&paths)? {
                 HooksStatus::Installed => "installed",
@@ -208,7 +255,7 @@ fn hooks(action: &str) -> Result<()> {
     Ok(())
 }
 
-/// `status` печатает `installed` | `not_installed`.
+/// `status` печатает `installed` | `not_installed`; `refresh` обновляет путь к Channel, только если наш запускатель уже стоит.
 fn launcher(action: &str, channel: Option<std::path::PathBuf>) -> Result<()> {
     use pet_bridge::launcher::{self, LauncherPaths};
     let paths = LauncherPaths::user();
@@ -217,6 +264,12 @@ fn launcher(action: &str, channel: Option<std::path::PathBuf>) -> Result<()> {
             let channel = channel.context("нужен путь к pet-channel")?;
             launcher::install(&paths, &channel)?;
             println!("Команда {} установлена", paths.launcher.display());
+        }
+        "refresh" => {
+            let channel = channel.context("нужен путь к pet-channel")?;
+            if launcher::refresh(&paths, &channel)? {
+                println!("Путь к Channel обновлён в {}", paths.mcp_config.display());
+            }
         }
         "uninstall" => {
             launcher::uninstall(&paths)?;

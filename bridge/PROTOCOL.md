@@ -59,7 +59,26 @@ JSON Lines: один JSON-объект на строку, UTF-8, `\n` в кон�
 {"type":"result","id":"8","ok":false,"error":"у сессии нет Channel (запусти claude-pet)"}
 ```
 
-`route`: `channel` | `inbox`; `delivery`: `sent` | `confirmed` | `unconfirmed` (как у `pet-bridge send`).
+`route`: `channel` | `inbox` | `hook`; `delivery`: `sent` | `confirmed` | `unconfirmed` (как у `pet-bridge send`). `hook` — ответ на `permission` для запроса hook'а (см. ниже), `delivery` в нём нет.
+
+#### Запрос от hook'а `PermissionRequest`
+
+`pending_permission` может прийти и от hook'а `PermissionRequest` (`pet-bridge hook permission`, только сессии расширения VS Code / Cursor): его `request_id` начинается с `hook-`, а у сессии при этом может не быть Channel (`has_channel:false`). Команда `permission` для такого id не требует Channel: мост проверяет, что pending сессии — ровно этот запрос (иначе `ok:false`, «запрос уже неактуален»), пишет файл вердикта `~/.claude-pet/verdicts/<request_id>.json`, только потом снимает pending и отвечает `route:"hook"`. Hook забирает вердикт и печатает решение Claude Code; диалог IDE остаётся, побеждает первый ответ.
+
+**«Разрешать всегда»** (дополнение v1, `protocol` остаётся `1`). Если Claude Code прислал hook'у `permission_suggestions`, hook оставляет только элементы `type:"addRules"` с `behavior:"allow"` и кладёт их в `pending_permission` в виде для показа — необязательное поле `remember` (его нет, если показывать нечего):
+
+```json
+"pending_permission":{"request_id":"hook-4242-1700000000000000000","tool_name":"Bash","input_preview":"rm -rf node_modules",
+  "remember":[{"rules":["Bash(rm -rf node_modules)"],"destination":"localSettings"}]}
+```
+
+`rules` — строки `Tool(ruleContent)` или `Tool`, `destination` — `session` | `localSettings` | `projectSettings` | `userSettings` (как прислал Claude Code; неизвестное значение приложение не показывает и кнопку не рисует). Тексты недоверенные. Больше 10 правил всего или правило длиннее 300 символов — поля нет (честно показать нельзя). Команда `permission` получает необязательное `"always":true` (по умолчанию `false`, старое приложение его не шлёт):
+
+```json
+{"id":"8","cmd":"permission","session_id":"s","request_id":"hook-4242-1700000000000000000","allow":true,"always":true}
+```
+
+Мост пишет вердикт `{"behavior":"allow","always":true}`, а hook добавляет в решение `updatedPermissions` — отобранные элементы дословно. Если предложений у hook'а нет, это обычный allow. `always` вместе с `allow:false` и для запросов Channel (без `hook-`) — ошибка `ok:false`, ничего не отправляется.
 
 ### `history` — последние реплики сессии (дополнение v1 от 2026-10-22)
 
@@ -116,5 +135,5 @@ JSON Lines: один JSON-объект на строку, UTF-8, `\n` в кон�
 
 ## Открытые вопросы
 
-1. **Откуда брать `error`.** Сейчас мост такой статус не выставляет никогда. Кандидаты: hook-события об ошибке/сбое остановки и ошибки API в транскрипте — нужно проверить, какие события Claude Code реально пишет (`events.jsonl`) при сбое. До этого `error` в протоколе есть, но не приходит.
+1. ~~Откуда брать `error`~~ — решено: из hook-события `StopFailure` (срабатывает вместо `Stop`, когда ход оборван ошибкой API; `log-event.sh` пишет в `events.jsonl` поле `error` — тип ошибки). Статус `error` снимается следующим `UserPromptSubmit` / `PreToolUse` / `PostToolUse` или `SessionEnd`; `Notification` его не затирает, `Stop` — заменяет на `done`. Pending-разрешение сессии при ошибке снимается. Причина — в `last_message` по-русски: «ошибка: лимит запросов» (`rate_limit`), «ошибка: сервер перегружен» (`overloaded`), «ошибка: нужна авторизация» (`authentication_failed`, `oauth_org_not_allowed`), «ошибка: проблема с оплатой» (`billing_error`, `account_on_hold`), иначе «ошибка API (<тип>)»; пока статус `error`, реплики транскрипта `last_message` не перезаписывают. Формат протокола не менялся. Ошибки API в транскрипте мост не разбирает.
 2. ~~Нужен ли поток сообщений для Quick Chat~~ — решено: команда `history` (см. выше). Живой поток новых реплик не нужен: приложение перезапрашивает `history`, когда в снимке меняется `last_message`.

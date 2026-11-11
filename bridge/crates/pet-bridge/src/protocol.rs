@@ -95,6 +95,9 @@ pub enum Command {
         session_id: String,
         request_id: String,
         allow: bool,
+        /// «Разрешать всегда»: только с `allow` и только для запросов hook'а. Старое приложение поле не шлёт.
+        #[serde(default)]
+        always: bool,
     },
     /// Дополнение v1 (2026-10-22): последние `limit` реплик транскрипта.
     History {
@@ -109,6 +112,7 @@ pub fn status_name(status: SessionStatus) -> &'static str {
         SessionStatus::Working => "working",
         SessionStatus::WaitingPermission => "waiting",
         SessionStatus::Done => "done",
+        SessionStatus::Error => "error",
     }
 }
 
@@ -132,7 +136,7 @@ pub fn sessions_snapshot(registry: &SessionRegistry) -> Vec<SessionDto> {
 }
 
 /// Статус питомца по всем сессиям, приоритет как у ChatGPT Pets:
-/// Needs input → Blocked → Ready → Running, иначе idle. `error` мост пока не выставляет.
+/// Needs input → Blocked (error) → Ready → Running, иначе idle.
 pub fn pet_status(sessions: &[SessionDto]) -> &'static str {
     const PRIORITY: [&str; 4] = ["waiting", "error", "done", "working"];
     PRIORITY
@@ -167,6 +171,10 @@ mod tests {
             pet_status(&[session("a", "done"), session("b", "waiting"), session("c", "working")]),
             "waiting"
         );
+        assert_eq!(pet_status(&[session("a", "working"), session("b", "error")]), "error");
+        assert_eq!(pet_status(&[session("a", "done"), session("b", "error")]), "error");
+        assert_eq!(pet_status(&[session("a", "error"), session("b", "waiting")]), "waiting");
+        assert_eq!(status_name(SessionStatus::Error), "error");
     }
 
     #[test]
@@ -179,6 +187,20 @@ mod tests {
         assert!(line.starts_with(r#"{"type":"sessions","pet_status":"working","sessions":[{"session_id":"aaaaaaaa-1111","short_id":"aaaaaaaa""#));
         assert!(!line.contains('\n'));
         assert!(!line.contains("token") && !line.contains("socket") && !line.contains("transcript"));
+    }
+
+    #[test]
+    fn sessions_snapshot_carries_remember_rules() {
+        use crate::state::{PendingPermission, RememberRule};
+        let mut dto = session("s", "waiting");
+        dto.pending_permission = Some(PendingPermission {
+            request_id: "hook-1-2".into(),
+            tool_name: "Bash".into(),
+            input_preview: "ls".into(),
+            remember: vec![RememberRule { rules: vec!["Bash(ls)".into()], destination: "localSettings".into() }],
+        });
+        let line = serde_json::to_string(&Event::Sessions { pet_status: "waiting", sessions: vec![dto] }).unwrap();
+        assert!(line.contains(r#""pending_permission":{"request_id":"hook-1-2","tool_name":"Bash","input_preview":"ls","remember":[{"rules":["Bash(ls)"],"destination":"localSettings"}]}"#));
     }
 
     #[test]
@@ -244,6 +266,12 @@ mod tests {
             r#"{"id":"8","cmd":"permission","session_id":"s","request_id":"r-42","allow":true}"#,
         )
         .unwrap();
-        assert!(matches!(r.command, Command::Permission { allow: true, .. }));
+        assert!(matches!(r.command, Command::Permission { allow: true, always: false, .. }));
+
+        let r: Request = serde_json::from_str(
+            r#"{"id":"8","cmd":"permission","session_id":"s","request_id":"hook-1-2","allow":true,"always":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(r.command, Command::Permission { allow: true, always: true, .. }));
     }
 }

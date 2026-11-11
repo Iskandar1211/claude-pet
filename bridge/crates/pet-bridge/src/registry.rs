@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -10,8 +11,15 @@ use crate::hook_event::HookEvent;
 use crate::liveness::{process_alive, session_alive};
 use crate::paths::{channels_dir, pending_dir, pid_from_socket, tokens_dir};
 use crate::pending::{clear_pending_file, load_pending, save_pending};
-use crate::state::{apply_hook_event, apply_transcript_signal, PendingPermission, SessionStatus};
+use crate::permission_hook::{hook_request_pid, is_hook_request};
+use crate::state::{apply_hook_event, apply_transcript_signal, error_reason, PendingPermission, SessionStatus};
 use crate::transcript::{one_line, parse_transcript_line};
+
+/// events.jsonl больше этого размера обрезаем до хвоста `EVENTS_KEEP_BYTES`.
+const EVENTS_MAX_BYTES: u64 = 8 * 1024 * 1024;
+const EVENTS_KEEP_BYTES: u64 = 1024 * 1024;
+/// Как часто чистить токены умерших сессий.
+const TOKENS_PRUNE_EVERY: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
@@ -35,6 +43,7 @@ pub struct SessionRegistry {
     sessions: HashMap<String, SessionRecord>,
     events_offset: u64,
     last_session_id: Option<String>,
+    last_tokens_prune: Option<Instant>,
 }
 
 impl SessionRegistry {
@@ -56,6 +65,10 @@ impl SessionRegistry {
 
     pub fn refresh(&mut self, events_path: &PathBuf) -> Result<()> {
         self.ingest_events(events_path)?;
+        if self.last_tokens_prune.map_or(true, |t| t.elapsed() >= TOKENS_PRUNE_EVERY) {
+            self.last_tokens_prune = Some(Instant::now());
+            prune_dead_tokens(&tokens_dir());
+        }
         self.load_inbox_tokens();
         self.load_channels();
         self.load_pending_files();
@@ -93,6 +106,48 @@ impl SessionRegistry {
             }
             buf.clear();
         }
+        if len > EVENTS_MAX_BYTES {
+            self.trim_events(events_path)?;
+        }
+        Ok(())
+    }
+
+    /// Оставляет в логе хвост из уже прочитанных (целых) строк и согласует с ним смещение.
+    /// Пишем во временный файл и делаем rename: hook-скрипты открывают лог по пути на каждое событие
+    /// (`>>`), поэтому новые записи попадают в новый файл, а файл никогда не бывает полупрозрачно
+    /// усечённым. Копируем только до `events_offset` — недописанная строка в копию не попадает.
+    /// Остаточный риск: событие, дописанное между чтением и rename (или в уже открытый старый файл),
+    /// теряется.
+    fn trim_events(&mut self, path: &Path) -> Result<()> {
+        use std::io::{Read, Seek, SeekFrom, Write};
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let start = self.events_offset.saturating_sub(EVENTS_KEEP_BYTES);
+        if start == 0 {
+            return Ok(());
+        }
+        let mut src = fs::File::open(path).context("open events.jsonl")?;
+        src.seek(SeekFrom::Start(start))?;
+        let mut tail = vec![0u8; (self.events_offset - start) as usize];
+        src.read_exact(&mut tail)?;
+        // Начало вырезано посреди строки: отбрасываем всё до первого перевода строки.
+        let Some(nl) = tail.iter().position(|&b| b == b'\n') else {
+            return Ok(());
+        };
+        let tail = &tail[nl + 1..];
+
+        let tmp = path.with_extension("jsonl.trim");
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .context("create events tmp")?;
+        out.write_all(tail)?;
+        out.sync_all()?;
+        fs::rename(&tmp, path).context("rename events tmp")?;
+        self.events_offset = tail.len() as u64;
         Ok(())
     }
 
@@ -140,7 +195,11 @@ impl SessionRegistry {
             ev.notification_type.as_deref(),
             ev.notification.as_deref(),
         );
-        if entry.status == SessionStatus::Working {
+        if ev.event == "StopFailure" {
+            entry.last_message = Some(error_reason(ev.error.as_deref()));
+        }
+        let pending = load_pending(&ev.session_id);
+        if pending_cleared_by(&ev.event, entry.status, pending.as_ref()) {
             entry.pending_permission = None;
             clear_pending_file(&ev.session_id);
         }
@@ -193,6 +252,11 @@ impl SessionRegistry {
                 .unwrap_or_default()
                 .to_string();
             if let Some(perm) = load_pending(&sid) {
+                // Claude Code завершил hook (ответ в IDE) — убрать за ним некому, кроме нас.
+                if hook_request_pid(&perm.request_id).is_some_and(|pid| !process_alive(pid)) {
+                    clear_pending_file(&sid);
+                    continue;
+                }
                 if let Some(rec) = self.sessions.get_mut(&sid) {
                     rec.pending_permission = Some(perm);
                     rec.status = SessionStatus::WaitingPermission;
@@ -325,8 +389,15 @@ impl SessionRegistry {
             let line = String::from_utf8_lossy(&buf[..buf.len() - 1]);
             rec.status =
                 apply_transcript_signal(rec.status, &line, line_end_offset, file_len_at_tail);
-            if let Some(chat) = parse_transcript_line(&line) {
-                rec.last_message = Some(format!("{}: {}", chat.role, chat.preview));
+            if rec.status == SessionStatus::Done && rec.pending_permission.as_ref().is_some_and(|p| is_hook_request(&p.request_id)) {
+                rec.pending_permission = None;
+                clear_pending_file(id);
+            }
+            // Пока сессия в ошибке, причина из StopFailure важнее реплик транскрипта (там тот же сбой сырым текстом).
+            if rec.status != SessionStatus::Error {
+                if let Some(chat) = parse_transcript_line(&line) {
+                    rec.last_message = Some(format!("{}: {}", chat.role, chat.preview));
+                }
             }
             buf.clear();
         }
@@ -340,6 +411,39 @@ impl SessionRegistry {
                 _ => true,
             }
         });
+    }
+}
+
+/// Снимает ли событие hook'а pending сессии. Переход в Working снимает любой pending, кроме
+/// pending hook'а `PermissionRequest` на PreToolUse: Claude Code пишет PreToolUse того же
+/// инструмента раньше, чем запускает hook, а serve может прочитать его уже после записи pending.
+/// Ход завершён (Stop) — ждать разрешения нечего, pending hook'а тоже снимаем.
+fn pending_cleared_by(event: &str, status: SessionStatus, pending: Option<&PendingPermission>) -> bool {
+    let from_hook = pending.is_some_and(|p| is_hook_request(&p.request_id));
+    match status {
+        SessionStatus::Working => !(from_hook && event == "PreToolUse"),
+        SessionStatus::Done => from_hook && event == "Stop",
+        // Ход оборван ошибкой — запрос разрешения уже неактуален (в том числе из Channel).
+        SessionStatus::Error => event == "StopFailure",
+        _ => false,
+    }
+}
+
+/// Удаляет `tokens/*.json`, чей процесс сессии точно мёртв (pid из имени сокета).
+/// Любое сомнение (нечитаемый файл, пустой сокет, pid не разобран) — файл остаётся.
+fn prune_dead_tokens(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&path) else { continue };
+        let Ok(creds) = serde_json::from_str::<InboxCreds>(&raw) else { continue };
+        let Some(pid) = pid_from_socket(&creds.socket) else { continue };
+        if !process_alive(pid) {
+            let _ = fs::remove_file(&path);
+        }
     }
 }
 
@@ -430,6 +534,26 @@ impl SessionRegistry {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn hook_pending_survives_pre_tool_use_only() {
+        let hook = PendingPermission { request_id: "hook-1-2".into(), ..Default::default() };
+        let channel = PendingPermission { request_id: "abcde".into(), ..Default::default() };
+        let working = SessionStatus::Working;
+        assert!(!pending_cleared_by("PreToolUse", working, Some(&hook)));
+        assert!(pending_cleared_by("PostToolUse", working, Some(&hook)));
+        assert!(pending_cleared_by("UserPromptSubmit", working, Some(&hook)));
+        assert!(pending_cleared_by("PreToolUse", working, Some(&channel)));
+        assert!(pending_cleared_by("PreToolUse", working, None));
+        assert!(pending_cleared_by("Stop", SessionStatus::Done, Some(&hook)));
+        assert!(!pending_cleared_by("Notification", SessionStatus::Done, Some(&hook)));
+        assert!(!pending_cleared_by("Stop", SessionStatus::Done, Some(&channel)));
+        assert!(!pending_cleared_by("Notification", SessionStatus::WaitingPermission, Some(&hook)));
+        let error = SessionStatus::Error;
+        assert!(pending_cleared_by("StopFailure", error, Some(&hook)));
+        assert!(pending_cleared_by("StopFailure", error, Some(&channel)));
+        assert!(!pending_cleared_by("Notification", error, Some(&hook)));
+    }
 
     fn session_start_line(session_id: &str) -> String {
         format!(
@@ -560,6 +684,99 @@ mod tests {
         reg.ingest_events(&path).unwrap();
         assert!(reg.get(claude).is_some());
         assert!(reg.get(cursor).is_none());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pet-bridge-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn prune_dead_tokens_removes_only_dead_sessions() {
+        let dir = temp_dir("prune");
+        let put = |name: &str, body: String| fs::write(dir.join(name), body).unwrap();
+        let creds = |sock: &str| format!(r#"{{"socket":"{sock}","token":"t"}}"#);
+        put("dead.json", creds("/tmp/cc-socks/2000000000.sock"));
+        put("alive.json", creds(&format!("/tmp/cc-socks/{}.sock", std::process::id())));
+        put("nopid.json", creds("/tmp/cc-socks/abc.sock"));
+        put("empty.json", creds(""));
+        put("broken.json", "{не json".to_string());
+
+        prune_dead_tokens(&dir);
+
+        assert!(!dir.join("dead.json").exists());
+        for keep in ["alive.json", "nopid.json", "empty.json", "broken.json"] {
+            assert!(dir.join(keep).exists(), "{keep} должен остаться");
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn trim_events_keeps_line_aligned_tail_and_reads_new_events() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("trim");
+        let path = dir.join("events.jsonl");
+        let sid = "eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+        // Больше порога: много строк-заполнителей, в конце — событие сессии.
+        let filler = format!(r#"{{"event":"PreToolUse","session_id":"{sid}","tool":"{}"}}"#, "x".repeat(200));
+        let mut data = String::new();
+        while (data.len() as u64) <= EVENTS_MAX_BYTES {
+            data.push_str(&filler);
+            data.push('\n');
+        }
+        data.push_str(&user_prompt_line(sid));
+        data.push('\n');
+        fs::write(&path, &data).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let mut reg = SessionRegistry::new();
+        reg.ingest_events(&path).unwrap();
+
+        let trimmed = fs::read_to_string(&path).unwrap();
+        assert!(trimmed.len() as u64 <= EVENTS_KEEP_BYTES);
+        assert!(trimmed.len() as u64 > EVENTS_KEEP_BYTES / 2);
+        assert!(trimmed.ends_with('\n'));
+        assert!(trimmed.lines().all(|l| serde_json::from_str::<HookEvent>(l).is_ok()));
+        assert_eq!(reg.events_byte_offset(), trimmed.len() as u64);
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(reg.get(sid).unwrap().status, SessionStatus::Working);
+
+        // Дописанное после обрезки читается; полстроки не ломают чтение.
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, r#"{{"event":"Stop","session_id":"{sid}"}}"#).unwrap();
+        drop(file);
+        reg.ingest_events(&path).unwrap();
+        assert_eq!(reg.get(sid).unwrap().status, SessionStatus::Done);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stop_failure_marks_error_with_reason_until_next_prompt() {
+        let dir = temp_dir("stop-failure");
+        let path = dir.join("events.jsonl");
+        let sid = "eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(file, "{}", user_prompt_line(sid)).unwrap();
+        writeln!(file, r#"{{"event":"StopFailure","session_id":"{sid}","error":"rate_limit"}}"#).unwrap();
+        drop(file);
+
+        let mut reg = SessionRegistry::new();
+        reg.ingest_events(&path).unwrap();
+        let rec = reg.get(sid).unwrap();
+        assert_eq!(rec.status, SessionStatus::Error);
+        assert_eq!(rec.last_message.as_deref(), Some("ошибка: лимит запросов"));
+
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(file, "{}", user_prompt_line(sid)).unwrap();
+        drop(file);
+        reg.ingest_events(&path).unwrap();
+        assert_eq!(reg.get(sid).unwrap().status, SessionStatus::Working);
 
         let _ = fs::remove_dir_all(dir);
     }

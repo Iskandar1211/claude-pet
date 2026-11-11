@@ -1,43 +1,71 @@
 #!/bin/bash
-# Сборка и установка Claude Pet из исходников: проверяет зависимости, собирает .app
-# (app/scripts/build_app.sh), кладёт в ~/Applications и запускает. Подключение к Claude Code
-# делает окно приветствия в самом приложении — с согласия пользователя.
-# Собранное локально приложение не помечается как скачанное, поэтому Gatekeeper его не блокирует.
+# Установка готовой сборки Claude Pet из GitHub Releases:
+#   curl -fsSL https://raw.githubusercontent.com/Iskandar1211/claude-pet/main/install.sh | bash
+# Скачивает zip под архитектуру этого Mac и файл контрольных сумм, сверяет SHA-256, кладёт приложение
+# в ~/Applications и запускает. Подключение к Claude Code делает окно приветствия в самом приложении.
+# Скрипт самодостаточен (работает через pipe, файлы репозитория не нужны). Сборка из исходников — build-from-source.sh.
+# Приложение подписано ad-hoc и не нотаризовано; файлы, скачанные через curl, не получают метку карантина,
+# поэтому Gatekeeper их не блокирует.
 set -euo pipefail
-cd "$(dirname "$0")"
 
 APP_NAME="Claude Pet.app"
-DEST="$HOME/Applications"
 BUNDLE_ID="local.claude-code-pet"
+# Переопределяются окружением только для тестов.
+BASE_URL="${PET_BASE_URL:-https://github.com/Iskandar1211/claude-pet/releases/latest/download}"
+DEST="${PET_DEST:-$HOME/Applications}"
+SUMS_NAME="SHA256SUMS.txt"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [[ "$(uname)" == "Darwin" ]] || fail "Claude Pet runs on macOS only."
 
-# Обязательные зависимости: без них не собрать или питомец ничего не увидит.
-missing=()
-xcode-select -p >/dev/null 2>&1 && command -v swift >/dev/null || missing+=("Xcode Command Line Tools:  xcode-select --install")
-command -v cargo >/dev/null || missing+=("Rust:  curl https://sh.rustup.rs -sSf | sh   (or: brew install rust)")
-command -v jq >/dev/null || missing+=("jq (built into macOS 15+):  brew install jq")
-if ((${#missing[@]})); then
-  printf '\033[31mMissing requirements:\033[0m\n' >&2
-  printf '  - %s\n' "${missing[@]}" >&2
-  exit 1
+# hook-скрипты питомца используют jq, а он встроен в систему только с macOS 15.
+os_major="$(sw_vers -productVersion | cut -d. -f1)"
+if ((os_major < 15)); then
+  fail "Claude Pet needs macOS 15 or later (found $(sw_vers -productVersion)). On older systems build it from source: https://github.com/Iskandar1211/claude-pet#build-from-source"
 fi
-command -v bun >/dev/null || say "Bun not found — building without Channel (replies and approvals from the pet chat). Get it at https://bun.sh and re-run to add it."
 
-# У части сетей cargo зависает на HTTP/2-мультиплексировании при загрузке crates.io.
-export CARGO_HTTP_MULTIPLEXING="${CARGO_HTTP_MULTIPLEXING:-false}"
+arch="$(uname -m)"
+# Терминал под Rosetta на Apple Silicon тоже показывает x86_64 — берём нативную сборку.
+if [[ "$arch" == "x86_64" && "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; then
+  arch="arm64"
+fi
+case "$arch" in
+  arm64|x86_64) ;;
+  *) fail "Unsupported architecture: $arch" ;;
+esac
 
-say "Building (first build downloads Rust crates and takes a few minutes)…"
-app/scripts/build_app.sh
+ZIP_NAME="ClaudePet-$arch.zip"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+download() {
+  curl -fsSL --retry 3 --connect-timeout 15 -o "$2" "$1" ||
+    fail "Could not download ${1} — check your internet connection and that a release exists: https://github.com/Iskandar1211/claude-pet/releases"
+}
+
+say "Downloading ${ZIP_NAME}…"
+download "$BASE_URL/$ZIP_NAME" "$tmp/$ZIP_NAME"
+download "$BASE_URL/$SUMS_NAME" "$tmp/$SUMS_NAME"
+
+# Сверяем контрольную сумму: при несовпадении или отсутствии записи ничего не устанавливаем.
+expected="$(awk -v n="$ZIP_NAME" '$2 == n || $2 == "*" n { print $1; exit }' "$tmp/$SUMS_NAME")"
+[[ -n "$expected" ]] || fail "No checksum for $ZIP_NAME in $SUMS_NAME — aborting."
+actual="$(shasum -a 256 "$tmp/$ZIP_NAME" | awk '{ print $1 }')"
+[[ "$actual" == "$expected" ]] || fail "Checksum mismatch for $ZIP_NAME (expected $expected, got $actual) — aborting, nothing was installed."
+say "Checksum OK"
+
+mkdir "$tmp/unpacked"
+ditto -x -k "$tmp/$ZIP_NAME" "$tmp/unpacked"
+[[ -d "$tmp/unpacked/$APP_NAME" ]] || fail "The archive doesn't contain $APP_NAME — aborting."
 
 say "Installing to $DEST/$APP_NAME"
 osascript -e 'quit app "Claude Pet"' >/dev/null 2>&1 || true
 mkdir -p "$DEST"
 rm -rf "${DEST:?}/$APP_NAME"
-ditto "app/build/$APP_NAME" "$DEST/$APP_NAME"
+ditto "$tmp/unpacked/$APP_NAME" "$DEST/$APP_NAME"
 
 # Новая установка — снова показать окно приветствия, если питомец ещё не подключён.
 defaults delete "$BUNDLE_ID" onboardingShown >/dev/null 2>&1 || true

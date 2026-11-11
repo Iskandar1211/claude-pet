@@ -7,8 +7,6 @@ import AppKit
 @MainActor
 final class UsageBadge: NSView {
     static let height: CGFloat = 18
-    /// Без терминала `usage.json` не обновляется — старый процент быстро сереет.
-    private static let staleAfter: TimeInterval = 5 * 60
     private static let padding: CGFloat = 7
 
     /// Капсула появилась или скрылась — окну питомца нужно поменять высоту.
@@ -18,6 +16,8 @@ final class UsageBadge: NSView {
 
     private let label = NSTextField(labelWithString: "")
     private var usage: BridgeClient.Usage?
+    /// Причина ошибки сессии (из `last_message`); не `nil` — капсула показывает ошибку вместо лимита: она важнее.
+    private var errorReason: String?
     private var hovering = false
     /// Короткий ответ на клик («обновлено ✓» или возраст данных) поверх процента.
     private var flash: (text: String, until: Date)?
@@ -50,6 +50,13 @@ final class UsageBadge: NSView {
 
     func update(_ usage: BridgeClient.Usage) {
         self.usage = usage
+        refresh()
+    }
+
+    /// `nil` — ошибки нет. Пока ошибка есть, капсула видна и без данных о лимите.
+    func setError(_ reason: String?) {
+        guard reason != errorReason else { return }
+        errorReason = reason
         refresh()
     }
 
@@ -91,14 +98,24 @@ final class UsageBadge: NSView {
 
     private func refresh() {
         let now = Date()
+        if let errorReason {
+            layer?.backgroundColor = NSColor.systemRed.cgColor
+            label.textColor = .white
+            label.stringValue = "⚠ ошибка"
+            toolTip = "Ход Claude оборвался: \(errorReason). Пройдёт после следующего запроса в сессии."
+            setVisible(true)
+            layoutInChrome()
+            return
+        }
         guard let usage else {
             setVisible(false)
             return
         }
         // Окно сброшено: процент устарел и неизвестно, сколько израсходовано в новом.
         let expired = usage.resetsAt <= now
-        let stale = now.timeIntervalSince(usage.updatedAt) > Self.staleAfter
+        let stale = now.timeIntervalSince(usage.updatedAt) > UsageStore.staleAfter
         let pct = usage.fiveHourPct
+        let warning = UsageStore.isNearLimit(usage, now: now)
         let background: NSColor, text: NSColor
         switch (stale || expired, pct) {
         case (true, _): (background, text) = (.systemGray.withAlphaComponent(0.6), .white.withAlphaComponent(0.8))
@@ -115,13 +132,16 @@ final class UsageBadge: NSView {
         } else {
             label.stringValue = hovering
                 ? "сброс \(usage.resetsAt.formatted(date: .omitted, time: .shortened))"
-                : "\(Int(pct.rounded()))%"
+                : "\(warning ? "⚠ " : "")\(Int(pct.rounded()))%"
         }
         let age = UsageStore.ageText(from: usage.updatedAt, now: now)
+        let staleNote = stale ? " — лимит обновляют только сессии в терминале" : ""
         let hint = "Клик — перечитать. Данные приходят из терминала Claude."
         toolTip = expired
             ? "Лимит неизвестен: окно сброшено в \(usage.resetsAt.formatted(date: .omitted, time: .shortened)). Отправь запрос в терминале Claude — данные обновятся. \(hint)"
-            : "Лимит Claude за 5 часов: \(Int(pct.rounded()))% (обновлено \(age)). \(hint)"
+            : warning
+            ? "Лимит почти исчерпан: \(Int(pct.rounded()))%. До сброса \(UsageStore.untilText(usage.resetsAt, now: now)) (в \(usage.resetsAt.formatted(date: .omitted, time: .shortened))). \(hint)"
+            : "Лимит Claude за 5 часов: \(Int(pct.rounded()))% (обновлено \(age)\(staleNote)). \(hint)"
 
         setVisible(true)
         layoutInChrome()

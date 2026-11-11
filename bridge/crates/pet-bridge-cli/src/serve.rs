@@ -9,6 +9,7 @@ use pet_bridge::protocol::{
     pet_status, sessions_snapshot, Command, Event, Request, SessionDto, HISTORY_MAX_LIMIT,
     PROTOCOL_VERSION,
 };
+use pet_bridge::permission_hook::{answer_hook_request, HOOK_REQUEST_PREFIX};
 use pet_bridge::{
     build_http_client, channel_token_for, clear_pending_file, load_or_create_config, read_chat, read_usage,
     resolve_session_id, send_channel_permission, send_to_session_confirmed, usage_path, Bridge, DeliveryResult,
@@ -17,6 +18,11 @@ use pet_bridge::{
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub async fn run() -> Result<()> {
+    // Признак для hook'а `PermissionRequest`: питомец запущен. Файл убирается при выходе из run.
+    // Без него не работают только кнопки для сессий IDE — serve из-за этого не роняем.
+    let _pid_file = pet_bridge::permission_hook::ServePidFile::create()
+        .inspect_err(|e| tracing::warn!("serve.pid: {e:#}"))
+        .ok();
     emit(&Event::Hello { protocol: PROTOCOL_VERSION })?;
     let mut last_usage: Option<Usage> = None;
     publish_usage_if_changed(&mut last_usage)?;
@@ -104,8 +110,8 @@ async fn handle(line: &str, bridge: &mut Bridge, cfg: &PetConfig, client: &reqwe
     }
     let outcome = match request.command {
         Command::Send { session_id, text } => send(bridge, cfg, client, &session_id, &text).await,
-        Command::Permission { session_id, request_id, allow } => {
-            permission(bridge, cfg, client, &session_id, &request_id, allow).await
+        Command::Permission { session_id, request_id, allow, always } => {
+            permission(bridge, cfg, client, &session_id, &request_id, allow, always).await
         }
         Command::History { .. } => unreachable!("history обработан выше"),
     };
@@ -146,6 +152,10 @@ async fn history(bridge: &Bridge, id: &str, session: &str, limit: usize) -> Resu
     Ok(Event::History { id: id.to_string(), session_id: sid, messages })
 }
 
+fn is_hook_request(request_id: &str) -> bool {
+    request_id.starts_with(HOOK_REQUEST_PREFIX)
+}
+
 async fn permission(
     bridge: &mut Bridge,
     cfg: &PetConfig,
@@ -153,8 +163,17 @@ async fn permission(
     session: &str,
     request_id: &str,
     allow: bool,
+    always: bool,
 ) -> Outcome {
     let sid = resolve_session_id(bridge.registry(), session)?;
+    if is_hook_request(request_id) {
+        // Запрос hook'а `PermissionRequest` (сессия IDE без Channel): вердикт файлом, ответит hook.
+        answer_hook_request(&sid, request_id, allow, always)?;
+        bridge.clear_pending_permission(&sid);
+        return Ok((Some("hook"), None));
+    }
+    // У запросов Channel нет правил для запоминания: молча разрешить без «всегда» было бы неправдой.
+    anyhow::ensure!(!always, "«разрешать всегда» доступно только для запросов hook'а");
     let rec = bridge.registry().get(&sid).context("сессия пропала из реестра")?;
     let port = rec.channel_port.context("у сессии нет Channel (запусти claude-pet)")?;
     let token = channel_token_for(rec, &cfg.channel_token);

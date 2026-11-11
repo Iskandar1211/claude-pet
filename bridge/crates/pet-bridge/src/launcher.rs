@@ -56,6 +56,17 @@ pub fn install(paths: &LauncherPaths, channel: &Path) -> Result<()> {
     Ok(())
 }
 
+/// При старте приложения: если наш запускатель уже стоит, а .app переехал — переписывает путь в `pet-mcp.json`.
+/// Нет запускателя, он чужой или `channel` не существует — ничего не делает и не создаёт. `true` — конфиг обновлён.
+pub fn refresh(paths: &LauncherPaths, channel: &Path) -> Result<bool> {
+    if !is_ours(&paths.launcher) || !channel.is_absolute() || !channel.exists() {
+        return Ok(false);
+    }
+    let config = json!({ "mcpServers": { "pet": { "command": channel } } });
+    write_with_mode(&paths.mcp_config, &serde_json::to_string_pretty(&config)?, 0o600)?;
+    Ok(true)
+}
+
 /// Убирает только свой запускатель и конфиг.
 pub fn uninstall(paths: &LauncherPaths) -> Result<()> {
     if is_ours(&paths.launcher) {
@@ -104,12 +115,32 @@ mod tests {
         assert!(script.contains("server:pet \"$@\""));
         install(&paths, &channel).unwrap(); // повторно — без ошибок
 
+        // refresh: .app переехал — путь в конфиге обновляется, запускатель не трогается.
+        let moved = dir.join("Moved.app/Contents/MacOS/pet-channel");
+        fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        fs::write(&moved, "bin").unwrap();
+        let script_before = fs::read_to_string(&paths.launcher).unwrap();
+        assert!(refresh(&paths, &moved).unwrap());
+        let config: serde_json::Value = serde_json::from_str(&fs::read_to_string(&paths.mcp_config).unwrap()).unwrap();
+        assert_eq!(config["mcpServers"]["pet"]["command"], moved.display().to_string());
+        assert_eq!(fs::read_to_string(&paths.launcher).unwrap(), script_before);
+        // Нет pet-channel в бандле — ничего не меняем.
+        let missing = dir.join("Gone.app/Contents/MacOS/pet-channel");
+        assert!(!refresh(&paths, &missing).unwrap());
+        assert!(fs::read_to_string(&paths.mcp_config).unwrap().contains("Moved.app"));
+
         uninstall(&paths).unwrap();
+        assert!(!paths.launcher.exists() && !paths.mcp_config.exists());
+
+        // Запускателя нет — refresh ничего не создаёт.
+        assert!(!refresh(&paths, &channel).unwrap());
         assert!(!paths.launcher.exists() && !paths.mcp_config.exists());
 
         // Свой claude-pet пользователя не трогаем ни при установке, ни при удалении.
         fs::write(&paths.launcher, "#!/bin/sh\necho mine\n").unwrap();
         assert!(install(&paths, &channel).is_err());
+        assert!(!refresh(&paths, &channel).unwrap()); // чужой — тоже не трогаем
+        assert!(!paths.mcp_config.exists());
         uninstall(&paths).unwrap();
         assert_eq!(fs::read_to_string(&paths.launcher).unwrap(), "#!/bin/sh\necho mine\n");
         fs::remove_dir_all(&dir).ok();

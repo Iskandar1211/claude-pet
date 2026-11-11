@@ -1,0 +1,55 @@
+# Релиз по тегу v*: собирает ClaudePet-arm64.zip и ClaudePet-x86_64.zip, считает SHA-256
+# и прикладывает всё к GitHub Release этого тега. Их скачивает install.sh.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$tag' must look like v1.2.3" >&2
+            exit 1
+          fi
+          echo "PET_VERSION=${tag#v}" >> "$GITHUB_ENV"
+
+      - name: Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # Channel обязателен: без PET_REQUIRE_CHANNEL сборка молча обошлась бы без него.
+      - name: Build arm64
+        run: PET_REQUIRE_CHANNEL=1 app/scripts/build_app.sh arm64 --zip
+
+      - name: Build x86_64
+        run: PET_REQUIRE_CHANNEL=1 app/scripts/build_app.sh x86_64 --zip
+
+      - name: Checksums
+        working-directory: app/build
+        run: shasum -a 256 ClaudePet-arm64.zip ClaudePet-x86_64.zip > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: app/build
+        run: |
+          files=(ClaudePet-arm64.zip ClaudePet-x86_64.zip SHA256SUMS.txt)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi

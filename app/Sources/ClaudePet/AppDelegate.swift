@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var pet: PetController?
+    private var petScene: PetScene?
     private let toggleItem = NSMenuItem(title: "Скрыть питомца", action: #selector(togglePet), keyEquivalent: "")
     private var statusItems: [NSMenuItem] = []
     private var characterItems: [NSMenuItem] = []
@@ -12,12 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessionItems: [NSMenuItem] = []
     private lazy var quickChatModel = QuickChatModel(bridge: bridge)
     private lazy var quickChat = QuickChatController(model: quickChatModel)
+    private var approvalBubble: ApprovalBubbleController?
     private let bridgeItem = NSMenuItem(title: "Мост: запускается…", action: nil, keyEquivalent: "")
     private let hooksItem = NSMenuItem(title: "", action: #selector(toggleHooks), keyEquivalent: "")
     private var hooksStatus: HooksInstaller.Status?
     private let onboarding = OnboardingController()
     private let usageBadge = UsageBadge()
     private let usageItem = NSMenuItem(title: "", action: #selector(refreshUsage), keyEquivalent: "")
+    private let summaryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var lastSessions: [BridgeSession] = []
     private var petStatusResolver = PetStatusResolver()
     private var resolvedPetStatus: PetStatus?
@@ -41,12 +44,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             usageBadge?.layoutInChrome()
         }
         usageBadge.onRefreshRequested = { [weak self] in self?.refreshUsageBadge() }
+        petScene = scene
         let controller = PetController(panel: panel, scene: scene)
         view.controller = controller
         controller.onClick = { [weak self, weak controller] in
             guard let panel = controller?.panel else { return }
             self?.quickChat.toggle(near: panel)
         }
+        let bubble = ApprovalBubbleController(model: quickChatModel, pet: panel)
+        controller.onMoved = { [weak bubble] in bubble?.follow() }
+        approvalBubble = bubble
         view.menu = makePetContextMenu()
         view.presentScene(scene)
         controller.spawn()
@@ -80,8 +87,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         bridge.start()
 
+        refreshLauncherChannelPath()
+        refreshHooksBridgeCopy()
         onboarding.model.onHooksChanged = { [weak self] status in self?.showHooksStatus(status) }
         onboarding.showOnFirstLaunch()
+    }
+
+    /// Если .app переехал, путь к pet-channel в ~/.claude-pet/pet-mcp.json протухает. Мост сам ничего не создаёт,
+    /// если `claude-pet` не стоит или он чужой; ошибку — только в лог.
+    private func refreshLauncherChannelPath() {
+        guard let channel = Bundle.main.url(forAuxiliaryExecutable: "pet-channel") else { return }
+        let (ok, output) = HooksInstaller.runBridge(["launcher", "refresh", channel.path])
+        if !ok { NSLog("ClaudePet: не удалось обновить путь к Channel: \(output)") }
+    }
+
+    /// Копия моста ~/.claude-pet/bin/pet-bridge для hook'а PermissionRequest устаревает при обновлении приложения.
+    /// Мост обновляет только саму копию и только если запись hook'а уже стоит; ошибку — только в лог.
+    private func refreshHooksBridgeCopy() {
+        let (ok, output) = HooksInstaller.runBridge(["hooks", "refresh"])
+        if !ok { NSLog("ClaudePet: не удалось обновить копию моста для hooks: \(output)") }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -119,8 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Лимит из `usage.json` — не только из моста (в `.app` иногда старый `pet-bridge`).
     private func refreshUsageBadge() {
+        // Ошибка сессии важнее лимита: капсула покажет её, а усталость питомца считается по лимиту отдельно.
+        usageBadge.setError(lastSessions.first { $0.status == .error }.map { UntrustedText.clean($0.lastMessage ?? "ошибка API", limit: 80) })
         // Окно сброшено — effective пуст; тогда капсула показывает «—» по последним известным данным.
-        guard let usage = UsageStore.effective(sessions: lastSessions) ?? UsageStore.load() else { return }
+        let usage = UsageStore.effective(sessions: lastSessions) ?? UsageStore.load()
+        petScene?.tired = UsageStore.isNearLimit(usage)
+        guard let usage else { return }
         usageBadge.update(usage)
     }
 
@@ -152,6 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         usageItem.target = self
         menu.addItem(usageItem)
         usageItem.title = UsageStore.describe(UsageStore.load())
+        summaryItem.isEnabled = false
+        summaryItem.isHidden = true
+        menu.addItem(summaryItem)
 
         let characterMenu = NSMenu()
         for character in PetCharacter.allCases {
@@ -194,6 +225,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Строка про лимит в меню — по свежим данным в момент открытия.
     func menuWillOpen(_ menu: NSMenu) {
         usageItem.title = UsageStore.describe(UsageStore.load())
+        refreshSummary()
+    }
+
+    /// «Сегодня: 3 сессии · 12 задач · 1 ч 30 мин» — мост читает events.jsonl за миллисекунды.
+    private func refreshSummary() {
+        let since = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        let (ok, output) = HooksInstaller.runBridge(["summary", "--since", String(since)])
+        guard ok, let data = output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = json["sessions"] as? Int,
+              let tasks = json["tasks"] as? Int,
+              let seconds = json["work_seconds"] as? Int else {
+            NSLog("ClaudePet: сводка дня недоступна: %@", output)
+            summaryItem.isHidden = true
+            return
+        }
+        var text: String
+        if sessions == 0 && tasks == 0 && seconds < 60 {
+            text = "Сегодня: пока ничего"
+        } else {
+            let minutes = seconds / 60
+            let time = minutes < 60 ? "\(minutes) мин" : "\(minutes / 60) ч \(minutes % 60) мин"
+            text = "Сегодня: \(Self.plural(sessions, "сессия", "сессии", "сессий")) · "
+                + "\(Self.plural(tasks, "задача", "задачи", "задач")) · \(time)"
+        }
+        if json["partial"] as? Bool == true { text += " (неполные данные)" }
+        summaryItem.title = text
+        summaryItem.isHidden = false
+    }
+
+    private static func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
+        let form = n % 100 / 10 == 1 ? many : (n % 10 == 1 ? one : (2...4 ~= n % 10 ? few : many))
+        return "\(n) \(form)"
     }
 
     @objc private func refreshUsage() {
@@ -228,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             panel.orderFrontRegardless()
             toggleItem.title = "Скрыть питомца"
         }
+        approvalBubble?.follow()
     }
 
     @objc private func selectCharacter(_ sender: NSMenuItem) {
