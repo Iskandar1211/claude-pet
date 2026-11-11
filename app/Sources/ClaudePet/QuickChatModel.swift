@@ -54,8 +54,11 @@ final class QuickChatModel {
     func update(sessions newSessions: [BridgeSession]) {
         sessions = newSessions
         if selected == nil {
-            // Сессия, которая ждёт одобрения, важнее остальных.
-            selectedId = (newSessions.first { $0.pendingPermission != nil } ?? newSessions.first)?.id
+            // Сессия, которая ждёт одобрения, важнее остальных. У сессий из VS Code/Cursor pendingPermission
+            // всегда nil, но статус .waiting есть — берём и их.
+            selectedId = (newSessions.first { $0.pendingPermission != nil }
+                ?? newSessions.first { $0.status == .waiting }
+                ?? newSessions.first)?.id
             resetConversation()
         }
         if isOpen { reloadHistoryIfNeeded() }

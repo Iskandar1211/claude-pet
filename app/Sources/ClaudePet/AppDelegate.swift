@@ -80,8 +80,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         bridge.start()
 
+        refreshLauncherChannelPath()
         onboarding.model.onHooksChanged = { [weak self] status in self?.showHooksStatus(status) }
         onboarding.showOnFirstLaunch()
+    }
+
+    /// Если .app переехал, путь к pet-channel в ~/.claude-pet/pet-mcp.json протухает. Мост сам ничего не создаёт,
+    /// если `claude-pet` не стоит или он чужой; ошибку — только в лог.
+    private func refreshLauncherChannelPath() {
+        guard let channel = Bundle.main.url(forAuxiliaryExecutable: "pet-channel") else { return }
+        let (ok, output) = HooksInstaller.runBridge(["launcher", "refresh", channel.path])
+        if !ok { NSLog("ClaudePet: не удалось обновить путь к Channel: \(output)") }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

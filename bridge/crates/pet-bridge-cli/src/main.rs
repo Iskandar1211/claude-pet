@@ -35,9 +35,9 @@ enum Commands {
     },
     /// Команда claude-pet в ~/.local/bin: Claude Code с Channel питомца из любой папки
     Launcher {
-        #[arg(value_parser = ["install", "uninstall", "status"])]
+        #[arg(value_parser = ["install", "uninstall", "status", "refresh"])]
         action: String,
-        /// Абсолютный путь к pet-channel (для install)
+        /// Абсолютный путь к pet-channel (для install и refresh)
         channel: Option<std::path::PathBuf>,
     },
     /// Протокол для Swift-приложения: JSON-строки в stdout/stdin (bridge/PROTOCOL.md)
@@ -208,7 +208,7 @@ fn hooks(action: &str) -> Result<()> {
     Ok(())
 }
 
-/// `status` печатает `installed` | `not_installed`.
+/// `status` печатает `installed` | `not_installed`; `refresh` обновляет путь к Channel, только если наш запускатель уже стоит.
 fn launcher(action: &str, channel: Option<std::path::PathBuf>) -> Result<()> {
     use pet_bridge::launcher::{self, LauncherPaths};
     let paths = LauncherPaths::user();
@@ -217,6 +217,12 @@ fn launcher(action: &str, channel: Option<std::path::PathBuf>) -> Result<()> {
             let channel = channel.context("нужен путь к pet-channel")?;
             launcher::install(&paths, &channel)?;
             println!("Команда {} установлена", paths.launcher.display());
+        }
+        "refresh" => {
+            let channel = channel.context("нужен путь к pet-channel")?;
+            if launcher::refresh(&paths, &channel)? {
+                println!("Путь к Channel обновлён в {}", paths.mcp_config.display());
+            }
         }
         "uninstall" => {
             launcher::uninstall(&paths)?;
