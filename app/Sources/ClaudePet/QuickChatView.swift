@@ -38,7 +38,11 @@ struct QuickChatView: View {
     private var header: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "pawprint.fill").foregroundStyle(ChatTheme.accent)
+                if let avatar = model.avatar {
+                    Image(nsImage: avatar).resizable().interpolation(.high).frame(width: 22, height: 22)
+                } else {
+                    Image(systemName: "pawprint.fill").foregroundStyle(ChatTheme.accent)
+                }
                 Text(verbatim: "Claude Pet")
                     .font(.headline)
                     .lineLimit(1)

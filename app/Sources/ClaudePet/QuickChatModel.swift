@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Observation
 
 /// Состояние Quick Chat: сессии из снимков моста, история выбранной сессии, отправка и одобрения.
@@ -21,6 +21,8 @@ final class QuickChatModel {
     /// Запрос, чей пузырь рядом с питомцем скрыт крестиком (сам запрос остаётся).
     private var dismissedBubbleId: String?
     private(set) var bridgeRunning = false
+    /// Голова выбранного персонажа для шапки чата; nil — лапка.
+    var avatar: NSImage?
     /// Растёт при каждом открытии панели — view по нему возвращает фокус в поле ввода.
     private(set) var focusTick = 0
     var draft = ""

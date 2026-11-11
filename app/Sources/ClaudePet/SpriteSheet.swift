@@ -57,6 +57,16 @@ final class SpriteSheet {
 
     func hasState(_ state: String) -> Bool { config.states[state] != nil }
 
+    /// Голова персонажа из первого кадра покоя — значок в строке меню и в шапке чата.
+    /// Квадрат 210×210 от (105, 35) в кадре 392 подобран по всем четырём листам; задан долями кадра.
+    func avatar(size: CGFloat) -> NSImage? {
+        guard let line = config.states["idle"]?.spriteLine else { return nil }
+        let frame = CGFloat(config.frameSize)
+        let rect = CGRect(x: frame * 105 / 392, y: CGFloat(line - 1) * frame + frame * 35 / 392,
+                          width: frame * 210 / 392, height: frame * 210 / 392)
+        return image.cropping(to: rect.integral).map { NSImage(cgImage: $0, size: NSSize(width: size, height: size)) }
+    }
+
     /// Кадры состояния; пустой массив, если такого состояния в листе нет.
     func textures(for state: String) -> [SKTexture] {
         if let cached = cache[state] { return cached }

@@ -27,7 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let view = PetView()
-        let scene = PetScene(sheet: SpriteSheet(PetCharacter.current), size: view.frame.size)
+        let sheet = SpriteSheet(PetCharacter.current)
+        let scene = PetScene(sheet: sheet, size: view.frame.size)
         // Капсула лимита — полоской под ногами: спрайт стоит вплотную к нижнему краю кадра.
         let petSize = PetView.displaySize
         let content = PetChromeView(frame: NSRect(x: 0, y: 0, width: petSize, height: petSize))
@@ -60,10 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pet = controller
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "Claude Pet")
         item.menu = makeMenu()
         item.menu?.delegate = self
         statusItem = item
+        showAvatar(sheet)
 
         // Статус питомца считаем сами из списка сессий (PetStatusResolver), а не берём pet_status моста.
         // Один снимок — трём потребителям: меню (шаг 4), уведомления (шаг 4), Quick Chat (шаг 5).
@@ -300,6 +301,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         PetCharacter.current = character
         characterItems.forEach { $0.state = $0.representedObject as? String == raw ? .on : .off }
         pet?.setCharacter(character)
+        showAvatar(SpriteSheet(character))
+    }
+
+    /// Значок в строке меню и в шапке чата — голова выбранного персонажа; если вырезать не удалось — лапка.
+    private func showAvatar(_ sheet: SpriteSheet) {
+        let avatar = sheet.avatar(size: 18)
+        avatar?.accessibilityDescription = "Claude Pet"
+        statusItem?.button?.image = avatar ?? NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "Claude Pet")
+        quickChatModel.avatar = avatar
     }
 
     @objc private func selectStatus(_ sender: NSMenuItem) {
