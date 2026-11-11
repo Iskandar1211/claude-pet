@@ -15,7 +15,7 @@ use crate::permission_hook::VERDICT_TIMEOUT;
 
 /// События, которые нужны мосту (см. `hook_event.rs`); `true` — с `matcher: "*"` (события инструментов).
 /// `PermissionRequest` — единственное с другой командой (бинарь моста, см. `permission_command`).
-const EVENTS: [(&str, bool); 9] = [
+const EVENTS: [(&str, bool); 11] = [
     ("SessionStart", false),
     ("SessionEnd", false),
     ("UserPromptSubmit", false),
@@ -24,6 +24,8 @@ const EVENTS: [(&str, bool); 9] = [
     ("Notification", false),
     ("Stop", false),
     ("StopFailure", false),
+    ("SubagentStart", false),
+    ("SubagentStop", false),
     (PERMISSION_EVENT, true),
 ];
 
@@ -552,12 +554,12 @@ mod tests {
     }
 
     #[test]
-    fn install_on_empty_settings_adds_nine_events_and_copy() {
+    fn install_on_empty_settings_adds_eleven_events_and_copy() {
         use std::os::unix::fs::PermissionsExt;
         let (paths, exe, dir) = temp_paths("empty");
         assert!(install(&paths, "#!/bin/bash\n", "#!/bin/bash\n", &exe).unwrap().changed);
         let s = read(&paths);
-        assert_eq!(s["hooks"].as_object().unwrap().len(), 9);
+        assert_eq!(s["hooks"].as_object().unwrap().len(), 11);
         let expected_cmd = format!("\"{}\" hook permission 2>/dev/null || true", paths.bridge.display());
         assert_eq!(
             s["hooks"]["PermissionRequest"],
@@ -590,6 +592,30 @@ mod tests {
         }
         assert_eq!(s["hooks"]["PermissionRequest"].as_array().unwrap().len(), 1);
         assert_eq!(s["hooks"]["StopFailure"].as_array().unwrap().len(), 1);
+        assert_eq!(current_status(&paths).unwrap(), HooksStatus::Installed);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn install_over_old_nine_events_adds_only_subagent_events() {
+        let (paths, exe, dir) = temp_paths("old9");
+        let mut old = json!({});
+        add_hooks(&mut old, CMD, PCMD).unwrap();
+        for e in ["SubagentStart", "SubagentStop"] {
+            old["hooks"].as_object_mut().unwrap().remove(e);
+        }
+        assert_eq!(status(&old), HooksStatus::Partial);
+        fs::write(&paths.settings, old.to_string()).unwrap();
+
+        let out = install(&paths, "#!/bin/bash\n", "#!/bin/bash\n", &exe).unwrap();
+        assert!(out.changed && out.backup.is_some());
+        let s = read(&paths);
+        for event in OLD_EVENTS.iter().chain(&["StopFailure", PERMISSION_EVENT]) {
+            assert_eq!(s["hooks"][*event], old["hooks"][*event], "{event} не тронут");
+        }
+        for e in ["SubagentStart", "SubagentStop"] {
+            assert_eq!(s["hooks"][e], json!([{ "hooks": [{ "type": "command", "command": hook_command(&paths.script) }] }]));
+        }
         assert_eq!(current_status(&paths).unwrap(), HooksStatus::Installed);
         fs::remove_dir_all(&dir).ok();
     }

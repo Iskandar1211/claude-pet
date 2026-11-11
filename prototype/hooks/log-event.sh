@@ -21,7 +21,8 @@ jq -c \
     tool: .tool_name, socket: $socket, entrypoint: $entrypoint,
     notification: .message}
    + (if (.notification_type | type) == "string" then {notification_type: .notification_type} else {} end)
-   + (if (.error | type) == "string" then {error: .error} else {} end)' <<<"$INPUT" >> "$LOG" 2>/dev/null
+   + (if (.error | type) == "string" then {error: .error} else {} end)
+   + (if (.agent_id | type) == "string" then {agent_id: .agent_id} else {} end)' <<<"$INPUT" >> "$LOG" 2>/dev/null
 
 # Пропуск в inbox сессии: сокет + токен. Хранится отдельно от лога, доступ только владельцу.
 # Пишем на любом событии, если файла ещё нет — так подхватываются и уже запущенные сессии.

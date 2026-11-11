@@ -91,7 +91,7 @@ You can reopen the window from the paw icon in the menu bar → **Настрой
 
 | Where | What | How to undo |
 |---|---|---|
-| `~/.claude/settings.json` | 9 hook entries (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SessionEnd`, `PermissionRequest`) next to any existing hooks; the `PermissionRequest` one runs `~/.claude-pet/bin/pet-bridge hook permission` (below); `statusLine` replaced by a wrapper that records the 5-hour limit and then runs your previous status line | `./uninstall.sh` or the menu bar item «Подключён ко всем проектам ✓ — отключить…» — removes only the pet's entries and restores your status line |
+| `~/.claude/settings.json` | 11 hook entries (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `PermissionRequest`) next to any existing hooks; the `PermissionRequest` one runs `~/.claude-pet/bin/pet-bridge hook permission` (below); `statusLine` replaced by a wrapper that records the 5-hour limit and then runs your previous status line | `./uninstall.sh` or the menu bar item «Подключён ко всем проектам ✓ — отключить…» — removes only the pet's entries and restores your status line |
 | `~/.claude-pet/` | hook scripts, session event log, backups of every `settings.json` change | delete the folder |
 | `~/.claude-pet/bin/pet-bridge` | a copy of the bridge binary for the `PermissionRequest` hook, so the entry in `settings.json` doesn't point inside the `.app` (refreshed on app start, only if that entry is installed) | `./uninstall.sh` (or delete the folder) |
 | `~/.local/bin/claude-pet` | the optional launcher (an existing file of the same name is never overwritten) | `./uninstall.sh` |

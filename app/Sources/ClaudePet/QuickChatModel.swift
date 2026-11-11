@@ -26,6 +26,8 @@ final class QuickChatModel {
     /// Растёт при каждом открытии панели — view по нему возвращает фокус в поле ввода.
     private(set) var focusTick = 0
     var draft = ""
+    /// Файлы к черновику; как и сам черновик, общие для всех сессий.
+    private(set) var attachments: [URL] = []
     private(set) var selectedId: String?
 
     private static let historyLimit = 60
@@ -149,8 +151,10 @@ final class QuickChatModel {
     // MARK: - Отправка
 
     func sendDraft() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let session = selected, feedback != .sending else { return }
+        let typed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty || !attachments.isEmpty, let session = selected, feedback != .sending else { return }
+        let sentFiles = attachments
+        let text = Attachments.message(text: typed, paths: sentFiles.map(\.path))
         voiceInput.stop()
         voiceOutput.stop()
         let byVoice = draftDictated
@@ -162,6 +166,7 @@ final class QuickChatModel {
             case .success(.result(_, let delivery)):
                 feedback = delivery == "unconfirmed" ? .unconfirmed : .delivered
                 draft = ""
+                attachments.removeAll { sentFiles.contains($0) }
                 draftDictated = false
                 if byVoice { awaitingReply = (session.id, text, false) }
             case .success:
@@ -170,6 +175,33 @@ final class QuickChatModel {
                 feedback = .failed(error.message)
             }
         }
+    }
+
+    // MARK: - Вложения
+
+    /// Без дублей; сверх лимита отбрасываются с сообщением в строке обратной связи.
+    func addAttachments(_ urls: [URL]) {
+        var overflow = false
+        for url in urls where url.isFileURL {
+            let file = url.standardizedFileURL
+            if attachments.contains(file) { continue }
+            if attachments.count >= Attachments.limit { overflow = true; break }
+            attachments.append(file)
+        }
+        if overflow, feedback != .sending {
+            feedback = .failed("можно прикрепить не больше \(Attachments.limit) файлов")
+        }
+    }
+
+    func removeAttachment(_ url: URL) {
+        attachments.removeAll { $0 == url }
+    }
+
+    /// ⌘V: файлы или картинка из буфера становятся вложениями. false — в буфере текст, вставит само поле.
+    func pasteAttachments() -> Bool {
+        let urls = Attachments.pasteboardFiles(.general)
+        addAttachments(urls)
+        return !urls.isEmpty
     }
 
     // MARK: - Голос

@@ -29,11 +29,13 @@ JSON Lines: один JSON-объект на строку, UTF-8, `\n` в кон�
 {"type":"sessions","pet_status":"waiting","sessions":[
   {"session_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","short_id":"aaaaaaaa","entrypoint":"cli",
    "cwd":"/Users/me/claude-code-pet","status":"working","last_message":"assistant: Сейчас посмотрю…",
-   "has_channel":true,"pending_permission":null},
+   "has_channel":true,"pending_permission":null,
+   "model":"claude-fable-5-2","model_name":"Fable 5.2","effort":"medium","permission_mode":"auto","subagents":2},
   {"session_id":"bbbbbbbb-…","short_id":"bbbbbbbb","entrypoint":"claude-vscode",
    "cwd":"/Users/me/other","status":"waiting","last_message":"assistant: [tool:Bash]",
    "has_channel":true,
-   "pending_permission":{"request_id":"r-42","tool_name":"Bash","input_preview":"rm -rf build"}}
+   "pending_permission":{"request_id":"r-42","tool_name":"Bash","input_preview":"rm -rf build"},
+   "subagents":0}
 ]}
 ```
 
@@ -41,6 +43,11 @@ JSON Lines: один JSON-объект на строку, UTF-8, `\n` в кон�
 - Снимок, а не дифф: сессий единицы, а снимок нельзя «рассинхронизировать» потерянным событием.
 - `status`: `idle` | `working` | `waiting` | `done` | `error` (`waiting` = `WaitingPermission` в Rust).
 - `pet_status` — статус питомца по всем сессиям, приоритет как у ChatGPT Pets: `waiting` → `error` → `done` → `working` → `idle`. Считается в мосте, чтобы правило жило в одном месте и покрывалось `cargo test`.
+- Дополнение v1 (2026-11-11), для строки состояния чата («Fable 5.2 · Medium · Auto · 2 agents»), все поля необязательны для приложения:
+  - `model` — сырой id основной сессии (`claude-fable-5-2`), `model_name` — имя для показа («Fable 5.2»; не разобрали id — он же). `effort` (`low`…`max`) и `permission_mode` (`auto`, `default`, `acceptEdits`, `plan`, …) — сырые строки. Пустые поля в строке **отсутствуют**.
+  - Берутся из транскрипта основной сессии (не субагентов): модель и effort — из последней записи ассистента, режим — из последней записи пользователя. Значения появляются при первом чтении транскрипта сессии и обновляются со следующей записью в него; у только что начатой сессии их может не быть.
+  - `subagents` — число работающих субагентов (`SubagentStart` без `SubagentStop`), всегда есть, `0` если нет. Обнуляется на `Stop`, `StopFailure`, `UserPromptSubmit`.
+  - Все строковые значения — **недоверенный текст**: приложение показывает их только как текст.
 - **Нет** полей `transcript_path`, `inbox_socket`, `inbox_token`, `channel_port`, `channel_token`.
 - `last_message` и `pending_permission.input_preview` — **недоверенный текст** из сессии: приложение показывает его только как текст.
 

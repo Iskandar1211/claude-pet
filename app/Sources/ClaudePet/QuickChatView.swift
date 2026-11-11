@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Содержимое панели Quick Chat. Все тексты из сессий (сообщения, input_preview, last_message, cwd)
 /// недоверенные: очищаются `UntrustedText`; ответы Claude — Markdown без ссылок (`MarkdownView`),
@@ -8,6 +9,7 @@ struct QuickChatView: View {
     let model: QuickChatModel
     let onClose: () -> Void
     @FocusState private var inputFocused: Bool
+    @State private var dropTargeted = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +29,16 @@ struct QuickChatView: View {
         .background(ChatTheme.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(ChatTheme.panelBorder))
+        .dropDestination(for: URL.self) { urls, _ in
+            model.addAttachments(urls)
+            return !urls.isEmpty
+        } isTargeted: { dropTargeted = $0 }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(ChatTheme.accent, lineWidth: 3)
+                .opacity(dropTargeted ? 1 : 0)
+                .allowsHitTesting(false)
+        }
         .environment(\.colorScheme, .dark)
         .foregroundStyle(ChatTheme.text)
         .tint(ChatTheme.accent)
@@ -100,6 +112,15 @@ struct QuickChatView: View {
                 }
                 .animation(.easeInOut(duration: 0.4), value: voiceGlowMode == nil)
             Divider()
+            if let line = session.statusLine {
+                Text(verbatim: line)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 6)
+            }
             inputBar
         }
     }
@@ -141,6 +162,15 @@ struct QuickChatView: View {
     private var inputBar: some View {
         @Bindable var model = model
         return VStack(alignment: .leading, spacing: 4) {
+            if !model.attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(model.attachments, id: \.self) { url in
+                            AttachmentChip(url: url) { model.removeAttachment(url) }
+                        }
+                    }
+                }
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField(inputPrompt, text: $model.draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -152,6 +182,7 @@ struct QuickChatView: View {
                     .padding(.vertical, 7)
                     .background(ChatTheme.inputBackground, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(ChatTheme.surfaceBorder))
+                attachButton
                 voiceButton
                 Button { model.sendDraft() } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 24))
@@ -190,6 +221,36 @@ struct QuickChatView: View {
         return "Сообщение Claude…"
     }
 
+    private var attachButton: some View {
+        Button(action: pickFiles) {
+            Image(systemName: "paperclip").font(.system(size: 20))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.secondary)
+        .help("Прикрепить файлы")
+        .accessibilityLabel("Прикрепить файлы")
+    }
+
+    /// Окно выбора — лист (sheet) самой панели чата: панель висит на уровне .statusBar, а лист всегда
+    /// рисуется поверх родителя на его уровне, так что обычный уровень NSOpenPanel не прячет его под чатом.
+    private func pickFiles() {
+        let open = NSOpenPanel()
+        open.allowsMultipleSelection = true
+        open.canChooseFiles = true
+        open.canChooseDirectories = false
+        open.message = "Выберите файлы для сообщения"
+        let done: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .OK { model.addAttachments(open.urls) }
+            inputFocused = true
+        }
+        NSApp.activate()
+        if let window = NSApp.windows.first(where: { $0 is QuickChatPanel && $0.isVisible }) {
+            open.beginSheetModal(for: window, completionHandler: done)
+        } else {
+            done(open.runModal())
+        }
+    }
+
     /// Пока идёт голос — плашка «Стоп» / «Готово»; иначе 🎤: начать диктовку.
     @ViewBuilder
     private var voiceButton: some View {
@@ -212,7 +273,8 @@ struct QuickChatView: View {
     }
 
     private var canSend: Bool {
-        !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.feedback != .sending
+        (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.attachments.isEmpty)
+            && model.feedback != .sending
     }
 
     @ViewBuilder
@@ -228,6 +290,38 @@ struct QuickChatView: View {
             Text(verbatim: "Ошибка: \(UntrustedText.clean(error, limit: 120))")
                 .foregroundStyle(.red).font(.caption).lineLimit(2)
         }
+    }
+}
+
+/// Плашка вложения над полем ввода: значок, имя файла, крестик. Полный путь — в подсказке.
+private struct AttachmentChip: View {
+    let url: URL
+    let onRemove: () -> Void
+
+    private var isImage: Bool {
+        UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) ?? false
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: isImage ? "photo" : "doc").foregroundStyle(.secondary)
+            Text(verbatim: UntrustedText.clean(url.lastPathComponent, limit: 120))
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 150)
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Убрать вложение")
+            .accessibilityLabel("Убрать вложение \(url.lastPathComponent)")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(ChatTheme.inputBackground, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChatTheme.surfaceBorder))
+        .help(url.path)
     }
 }
 

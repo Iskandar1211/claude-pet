@@ -42,6 +42,7 @@ final class QuickChatPanel: NSPanel {
 final class QuickChatController {
     private let model: QuickChatModel
     private let panel: QuickChatPanel
+    private var pasteMonitor: Any?
 
     init(model: QuickChatModel) {
         self.model = model
@@ -64,12 +65,35 @@ final class QuickChatController {
     private func open(near pet: NSWindow) {
         panel.setFrameOrigin(origin(near: pet.frame))
         panel.makeKeyAndOrderFront(nil)
+        installPasteMonitor()
         model.panelOpened()
     }
 
     private func close() {
         panel.orderOut(nil)
+        if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
+        pasteMonitor = nil
         model.panelClosed()
+    }
+
+    /// У приложения нет меню «Правка», поэтому ⌘V ловим сами и только для нетекстового буфера (файлы, картинка);
+    /// с текстом событие уходит дальше без изменений. Пока открыт лист выбора файла, событие идёт в него, а не в панель.
+    private func installPasteMonitor() {
+        if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            nonisolated(unsafe) let event = event // монитор вызывается в главном потоке
+            let consumed = MainActor.assumeIsolated { self?.handlePaste(event) ?? false }
+            return consumed ? nil : event
+        }
+    }
+
+    private func handlePaste(_ event: NSEvent) -> Bool {
+        guard event.window === panel,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              event.charactersIgnoringModifiers == "v",
+              model.pasteAttachments()
+        else { return false }
+        return true
     }
 
     /// Над питомцем, по центру; если сверху не помещается — под ним. Всегда внутри видимой области экрана.

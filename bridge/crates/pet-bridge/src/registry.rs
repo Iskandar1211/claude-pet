@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -13,7 +13,7 @@ use crate::paths::{channels_dir, pending_dir, pid_from_socket, tokens_dir};
 use crate::pending::{clear_pending_file, load_pending, save_pending};
 use crate::permission_hook::{hook_request_pid, is_hook_request};
 use crate::state::{apply_hook_event, apply_transcript_signal, error_reason, PendingPermission, SessionStatus};
-use crate::transcript::{one_line, parse_transcript_line};
+use crate::transcript::{one_line, parse_session_meta, parse_transcript_line};
 
 /// events.jsonl больше этого размера обрезаем до хвоста `EVENTS_KEEP_BYTES`.
 const EVENTS_MAX_BYTES: u64 = 8 * 1024 * 1024;
@@ -36,6 +36,40 @@ pub struct SessionRecord {
     pub last_message: Option<String>,
     pub pending_permission: Option<PendingPermission>,
     pub transcript_offset: u64,
+    /// Сырой id модели основной сессии (последняя запись `assistant` из транскрипта).
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub permission_mode: Option<String>,
+    /// `agent_id` работающих субагентов: был `SubagentStart`, ещё не было `SubagentStop`.
+    pub subagents: HashSet<String>,
+    /// Запасной счётчик для событий субагентов без `agent_id`.
+    pub subagents_anon: u32,
+}
+
+impl SessionRecord {
+    pub fn subagent_count(&self) -> usize {
+        self.subagents.len() + self.subagents_anon as usize
+    }
+
+    /// Учёт субагентов по hook-событию. Ход основной сессии закончился или начался заново —
+    /// счёт обнуляется: страховка от потерянного `SubagentStop`.
+    fn apply_subagent_event(&mut self, event: &str, agent_id: Option<&str>) {
+        match (event, agent_id) {
+            ("SubagentStart", Some(id)) => {
+                self.subagents.insert(id.to_string());
+            }
+            ("SubagentStart", None) => self.subagents_anon += 1,
+            ("SubagentStop", Some(id)) => {
+                self.subagents.remove(id);
+            }
+            ("SubagentStop", None) => self.subagents_anon = self.subagents_anon.saturating_sub(1),
+            ("Stop" | "StopFailure" | "UserPromptSubmit", _) => {
+                self.subagents.clear();
+                self.subagents_anon = 0;
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -174,6 +208,11 @@ impl SessionRegistry {
                 last_message: None,
                 pending_permission: None,
                 transcript_offset: 0,
+                model: None,
+                effort: None,
+                permission_mode: None,
+                subagents: HashSet::new(),
+                subagents_anon: 0,
             });
 
         if ev.entrypoint.is_some() {
@@ -189,6 +228,7 @@ impl SessionRegistry {
             entry.inbox_socket = Some(sock);
         }
 
+        entry.apply_subagent_event(&ev.event, ev.agent_id.as_deref());
         entry.status = apply_hook_event(
             entry.status,
             &ev.event,
@@ -393,6 +433,10 @@ impl SessionRegistry {
                 rec.pending_permission = None;
                 clear_pending_file(id);
             }
+            let meta = parse_session_meta(&line);
+            rec.model = meta.model.or(rec.model.take());
+            rec.effort = meta.effort.or(rec.effort.take());
+            rec.permission_mode = meta.permission_mode.or(rec.permission_mode.take());
             // Пока сессия в ошибке, причина из StopFailure важнее реплик транскрипта (там тот же сбой сырым текстом).
             if rec.status != SessionStatus::Error {
                 if let Some(chat) = parse_transcript_line(&line) {
@@ -518,6 +562,11 @@ impl SessionRegistry {
                     last_message: None,
                     pending_permission: None,
                     transcript_offset: 0,
+                    model: None,
+                    effort: None,
+                    permission_mode: None,
+                    subagents: HashSet::new(),
+                    subagents_anon: 0,
                 },
             );
         }
@@ -778,6 +827,141 @@ mod tests {
         reg.ingest_events(&path).unwrap();
         assert_eq!(reg.get(sid).unwrap().status, SessionStatus::Working);
 
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn ev(sid: &str, event: &str, agent: Option<&str>) -> String {
+        match agent {
+            Some(a) => format!(r#"{{"event":"{event}","session_id":"{sid}","agent_id":"{a}"}}"#),
+            None => format!(r#"{{"event":"{event}","session_id":"{sid}"}}"#),
+        }
+    }
+
+    /// Прогоняет события через настоящий разбор лога; возвращает (статус, число субагентов) после каждого.
+    fn replay(name: &str, events: &[String]) -> Vec<(SessionStatus, usize)> {
+        let dir = temp_dir(name);
+        let path = dir.join("events.jsonl");
+        let mut out = Vec::new();
+        let mut reg = SessionRegistry::new();
+        for e in events {
+            let mut file = fs::OpenOptions::new().create(true).append(true).open(&path).unwrap();
+            writeln!(file, "{e}").unwrap();
+            drop(file);
+            reg.ingest_events(&path).unwrap();
+            let rec = reg.sessions().next().unwrap();
+            out.push((rec.status, rec.subagent_count()));
+        }
+        let _ = fs::remove_dir_all(dir);
+        out
+    }
+
+    #[test]
+    fn subagents_start_stop_and_parallel() {
+        let sid = "ffffffff-0000-0000-0000-000000000001";
+        let r = replay(
+            "sub-basic",
+            &[
+                ev(sid, "UserPromptSubmit", None),
+                ev(sid, "SubagentStart", Some("a1")),
+                ev(sid, "SubagentStart", Some("a2")),
+                ev(sid, "SubagentStart", Some("a2")), // повтор не удваивает
+                ev(sid, "SubagentStop", Some("a1")),
+                ev(sid, "SubagentStop", Some("a2")),
+            ],
+        );
+        let counts: Vec<usize> = r.iter().map(|x| x.1).collect();
+        assert_eq!(counts, [0, 1, 2, 2, 1, 0]);
+        // События субагентов не меняют статус сессии.
+        assert!(r.iter().all(|x| x.0 == SessionStatus::Working));
+    }
+
+    #[test]
+    fn subagent_stop_without_start_stays_zero_and_anon_fallback() {
+        let sid = "ffffffff-0000-0000-0000-000000000002";
+        let r = replay(
+            "sub-anon",
+            &[
+                ev(sid, "SubagentStop", Some("ghost")),
+                ev(sid, "SubagentStop", None),
+                ev(sid, "SubagentStart", None),
+                ev(sid, "SubagentStart", None),
+                ev(sid, "SubagentStop", None),
+                ev(sid, "SubagentStop", None),
+                ev(sid, "SubagentStop", None),
+            ],
+        );
+        let counts: Vec<usize> = r.iter().map(|x| x.1).collect();
+        assert_eq!(counts, [0, 0, 1, 2, 1, 0, 0]);
+        assert!(r.iter().all(|x| x.0 == SessionStatus::Idle), "статус не меняется");
+    }
+
+    #[test]
+    fn subagents_reset_on_stop_failure_and_prompt_and_dont_touch_done() {
+        let sid = "ffffffff-0000-0000-0000-000000000003";
+        let r = replay(
+            "sub-reset",
+            &[
+                ev(sid, "UserPromptSubmit", None),
+                ev(sid, "SubagentStart", Some("a1")),
+                ev(sid, "Stop", None),
+                ev(sid, "SubagentStart", Some("a2")), // после Stop статус остаётся Done
+                ev(sid, "SubagentStop", Some("a2")),
+                ev(sid, "SubagentStart", Some("a3")),
+                ev(sid, "UserPromptSubmit", None),
+                ev(sid, "SubagentStart", Some("a4")),
+                ev(sid, "StopFailure", None),
+            ],
+        );
+        use SessionStatus::*;
+        assert_eq!(
+            r,
+            [(Working, 0), (Working, 1), (Done, 0), (Done, 1), (Done, 0), (Done, 1), (Working, 0), (Working, 1), (Error, 0)]
+        );
+    }
+
+    #[test]
+    fn tail_transcript_extracts_model_effort_and_mode() {
+        let dir = temp_dir("meta-tail");
+        let transcript = dir.join("t.jsonl");
+        let events = dir.join("events.jsonl");
+        let sid = "ffffffff-0000-0000-0000-000000000004";
+        fs::write(
+            &transcript,
+            concat!(
+                r#"{"type":"user","permissionMode":"plan","message":{"content":"hi"}}"#, "\n",
+                r#"{"type":"assistant","effort":"high","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"ok"}]}}"#, "\n",
+                r#"{"type":"assistant","isSidechain":true,"effort":"low","message":{"model":"claude-haiku-5-5","content":[]}}"#, "\n",
+                r#"{"type":"assistant","message":{"model":"<synthetic>","content":[]}}"#, "\n",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &events,
+            format!(r#"{{"event":"SessionStart","session_id":"{sid}","transcript_path":"{}"}}"#, transcript.display()) + "\n",
+        )
+        .unwrap();
+        let mut reg = SessionRegistry::new();
+        reg.ingest_events(&events).unwrap();
+        // Первое знакомство читает файл с начала — значения есть сразу.
+        reg.tail_one_transcript(sid).unwrap();
+        let rec = reg.get(sid).unwrap();
+        assert_eq!(rec.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(rec.effort.as_deref(), Some("high"));
+        assert_eq!(rec.permission_mode.as_deref(), Some("plan"));
+
+        // Новая запись без effort обновляет модель, но effort остаётся прежним; режим меняется со следующим user.
+        let mut f = fs::OpenOptions::new().append(true).open(&transcript).unwrap();
+        writeln!(f, r#"{{"type":"assistant","message":{{"model":"claude-fable-5-2","content":[]}}}}"#).unwrap();
+        writeln!(f, r#"{{"type":"user","permissionMode":"auto","message":{{"content":"x"}}}}"#).unwrap();
+        drop(f);
+        reg.tail_one_transcript(sid).unwrap();
+        let rec = reg.get(sid).unwrap();
+        assert_eq!(rec.model.as_deref(), Some("claude-fable-5-2"));
+        assert_eq!(rec.effort.as_deref(), Some("high"));
+        assert_eq!(rec.permission_mode.as_deref(), Some("auto"));
+
+        let snap = crate::protocol::sessions_snapshot(&reg);
+        assert_eq!(snap[0].model_name.as_deref(), Some("Fable 5.2"));
         let _ = fs::remove_dir_all(dir);
     }
 }
