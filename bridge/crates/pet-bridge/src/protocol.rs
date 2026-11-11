@@ -95,6 +95,9 @@ pub enum Command {
         session_id: String,
         request_id: String,
         allow: bool,
+        /// «Разрешать всегда»: только с `allow` и только для запросов hook'а. Старое приложение поле не шлёт.
+        #[serde(default)]
+        always: bool,
     },
     /// Дополнение v1 (2026-10-22): последние `limit` реплик транскрипта.
     History {
@@ -182,6 +185,20 @@ mod tests {
     }
 
     #[test]
+    fn sessions_snapshot_carries_remember_rules() {
+        use crate::state::{PendingPermission, RememberRule};
+        let mut dto = session("s", "waiting");
+        dto.pending_permission = Some(PendingPermission {
+            request_id: "hook-1-2".into(),
+            tool_name: "Bash".into(),
+            input_preview: "ls".into(),
+            remember: vec![RememberRule { rules: vec!["Bash(ls)".into()], destination: "localSettings".into() }],
+        });
+        let line = serde_json::to_string(&Event::Sessions { pet_status: "waiting", sessions: vec![dto] }).unwrap();
+        assert!(line.contains(r#""pending_permission":{"request_id":"hook-1-2","tool_name":"Bash","input_preview":"ls","remember":[{"rules":["Bash(ls)"],"destination":"localSettings"}]}"#));
+    }
+
+    #[test]
     fn result_omits_empty_fields() {
         let line = serde_json::to_string(&Event::Result {
             id: "8".into(),
@@ -244,6 +261,12 @@ mod tests {
             r#"{"id":"8","cmd":"permission","session_id":"s","request_id":"r-42","allow":true}"#,
         )
         .unwrap();
-        assert!(matches!(r.command, Command::Permission { allow: true, .. }));
+        assert!(matches!(r.command, Command::Permission { allow: true, always: false, .. }));
+
+        let r: Request = serde_json::from_str(
+            r#"{"id":"8","cmd":"permission","session_id":"s","request_id":"hook-1-2","allow":true,"always":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(r.command, Command::Permission { allow: true, always: true, .. }));
     }
 }

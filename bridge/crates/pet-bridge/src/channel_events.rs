@@ -103,6 +103,7 @@ fn parse_block(block: &str) -> Option<ChannelEvent> {
                 request_id: d.request_id,
                 tool_name: d.tool_name,
                 input_preview: d.input_preview,
+                remember: Vec::new(),
             }))
         }
         "reply" => {

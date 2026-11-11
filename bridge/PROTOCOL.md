@@ -65,6 +65,21 @@ JSON Lines: один JSON-объект на строку, UTF-8, `\n` в кон�
 
 `pending_permission` может прийти и от hook'а `PermissionRequest` (`pet-bridge hook permission`, только сессии расширения VS Code / Cursor): его `request_id` начинается с `hook-`, а у сессии при этом может не быть Channel (`has_channel:false`). Команда `permission` для такого id не требует Channel: мост проверяет, что pending сессии — ровно этот запрос (иначе `ok:false`, «запрос уже неактуален»), пишет файл вердикта `~/.claude-pet/verdicts/<request_id>.json`, только потом снимает pending и отвечает `route:"hook"`. Hook забирает вердикт и печатает решение Claude Code; диалог IDE остаётся, побеждает первый ответ.
 
+**«Разрешать всегда»** (дополнение v1, `protocol` остаётся `1`). Если Claude Code прислал hook'у `permission_suggestions`, hook оставляет только элементы `type:"addRules"` с `behavior:"allow"` и кладёт их в `pending_permission` в виде для показа — необязательное поле `remember` (его нет, если показывать нечего):
+
+```json
+"pending_permission":{"request_id":"hook-4242-1700000000000000000","tool_name":"Bash","input_preview":"rm -rf node_modules",
+  "remember":[{"rules":["Bash(rm -rf node_modules)"],"destination":"localSettings"}]}
+```
+
+`rules` — строки `Tool(ruleContent)` или `Tool`, `destination` — `session` | `localSettings` | `projectSettings` | `userSettings` (как прислал Claude Code; неизвестное значение приложение не показывает и кнопку не рисует). Тексты недоверенные. Больше 10 правил всего или правило длиннее 300 символов — поля нет (честно показать нельзя). Команда `permission` получает необязательное `"always":true` (по умолчанию `false`, старое приложение его не шлёт):
+
+```json
+{"id":"8","cmd":"permission","session_id":"s","request_id":"hook-4242-1700000000000000000","allow":true,"always":true}
+```
+
+Мост пишет вердикт `{"behavior":"allow","always":true}`, а hook добавляет в решение `updatedPermissions` — отобранные элементы дословно. Если предложений у hook'а нет, это обычный allow. `always` вместе с `allow:false` и для запросов Channel (без `hook-`) — ошибка `ok:false`, ничего не отправляется.
+
 ### `history` — последние реплики сессии (дополнение v1 от 2026-10-22)
 
 Ответ на команду `history`; `protocol` в `hello` остаётся `1` — старое приложение просто не шлёт эту команду.

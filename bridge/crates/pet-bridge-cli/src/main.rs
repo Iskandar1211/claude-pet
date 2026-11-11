@@ -45,6 +45,12 @@ enum Commands {
         #[arg(value_parser = ["permission"])]
         event: String,
     },
+    /// Сводка дня из events.jsonl: одна строка JSON (sessions, tasks, work_seconds, partial)
+    Summary {
+        /// Начало интервала, unix-секунды
+        #[arg(long)]
+        since: i64,
+    },
     /// Протокол для Swift-приложения: JSON-строки в stdout/stdin (bridge/PROTOCOL.md)
     Serve,
     /// Вердикт для pending permission (только Channel)
@@ -84,6 +90,13 @@ async fn main() -> Result<()> {
         }
         Commands::Serve => serve::run().await?,
         Commands::Hook { .. } => hook_permission(),
+        Commands::Summary { since } => {
+            let s = pet_bridge::summary::summarize_file(&pet_bridge::events_log(), since)?;
+            println!(
+                r#"{{"sessions":{},"tasks":{},"work_seconds":{},"partial":{}}}"#,
+                s.sessions, s.tasks, s.work_seconds, s.partial
+            );
+        }
         Commands::Hooks { action } => hooks(&action)?,
         Commands::Launcher { action, channel } => launcher(&action, channel)?,
         Commands::Send { session, text } => {

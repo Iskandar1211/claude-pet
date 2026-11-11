@@ -122,17 +122,32 @@ struct QuickChatView: View {
                     Text(verbatim: "Превью неполное — посмотри полную команду в терминале и ответь там.")
                         .font(.caption).foregroundStyle(.red)
                 }
+                let remember = Self.rememberLines(pending.remember)
+                if let remember {
+                    ForEach(Array(remember.enumerated()), id: \.offset) { _, line in
+                        (Text(verbatim: "Запомнить: ").font(.caption)
+                            + Text(verbatim: line.rules).font(.system(.caption, design: .monospaced))
+                            + Text(verbatim: " — \(line.place)").font(.caption))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 HStack {
                     Button("Разрешить") { model.answerPermission(requestId: pending.requestId, allow: true) }
                         .buttonStyle(.borderedProminent)
                         .disabled(truncated)
-                    Button("Отклонить") { model.answerPermission(requestId: pending.requestId, allow: false) }
-                    if let error = model.permissionError {
-                        Text(verbatim: UntrustedText.clean(error, limit: 80))
-                            .font(.caption).foregroundStyle(.red).lineLimit(2)
+                    if remember != nil {
+                        Button("Разрешать всегда") {
+                            model.answerPermission(requestId: pending.requestId, allow: true, always: true)
+                        }
+                        .disabled(truncated)
                     }
+                    Button("Отклонить") { model.answerPermission(requestId: pending.requestId, allow: false) }
                 }
                 .disabled(model.permissionBusy)
+                if let error = model.permissionError {
+                    Text(verbatim: UntrustedText.clean(error, limit: 80))
+                        .font(.caption).foregroundStyle(.red).lineLimit(2)
+                }
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,6 +163,26 @@ struct QuickChatView: View {
     }
 
     private static let previewLimit = 4_000
+
+    /// Строки «что запомнится и где». `nil` — кнопки «Разрешать всегда» нет: правил нет или место
+    /// сохранения неизвестно (показать честно нельзя).
+    private static func rememberLines(_ items: [BridgeSession.RememberRule]) -> [(rules: String, place: String)]? {
+        guard !items.isEmpty else { return nil }
+        var lines: [(rules: String, place: String)] = []
+        for item in items {
+            let place: String
+            switch item.destination {
+            case "localSettings": place = "для этого проекта (только у тебя)"
+            case "projectSettings": place = "для этого проекта (для всех, попадёт в .claude/settings.json)"
+            case "userSettings": place = "для всех проектов"
+            case "session": place = "до конца сессии"
+            default: return nil
+            }
+            let rules = item.rules.map { UntrustedText.clean($0, limit: 300) }.joined(separator: ", ")
+            lines.append((rules, place))
+        }
+        return lines
+    }
 
     /// Поле команды по её длине (грубо: ~52 символа в строке), но не выше 140 — дальше прокрутка.
     private static func previewHeight(_ preview: String) -> CGFloat {

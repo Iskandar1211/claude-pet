@@ -16,6 +16,20 @@ pub struct PendingPermission {
     pub request_id: String,
     pub tool_name: String,
     pub input_preview: String,
+    /// Что запомнит «Разрешать всегда» (только запросы hook'а): по элементу на правку прав Claude Code.
+    /// Пусто — кнопки нет; в pending-файле и снимке поля тогда нет вовсе.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remember: Vec<RememberRule>,
+}
+
+/// Одно предложение Claude Code `addRules`/`allow` в виде для показа человеку.
+/// Тексты недоверенные (берутся из предложения Claude Code).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RememberRule {
+    /// Правила вида `Tool(ruleContent)` или `Tool`.
+    pub rules: Vec<String>,
+    /// `session` | `localSettings` | `projectSettings` | `userSettings` — как прислал Claude Code.
+    pub destination: String,
 }
 
 pub fn apply_hook_event(

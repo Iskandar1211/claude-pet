@@ -13,6 +13,7 @@ pub mod permission_hook;
 pub mod protocol;
 mod registry;
 mod state;
+pub mod summary;
 mod transcript;
 mod usage;
 mod writer;

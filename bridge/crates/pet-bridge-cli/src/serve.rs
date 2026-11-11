@@ -110,8 +110,8 @@ async fn handle(line: &str, bridge: &mut Bridge, cfg: &PetConfig, client: &reqwe
     }
     let outcome = match request.command {
         Command::Send { session_id, text } => send(bridge, cfg, client, &session_id, &text).await,
-        Command::Permission { session_id, request_id, allow } => {
-            permission(bridge, cfg, client, &session_id, &request_id, allow).await
+        Command::Permission { session_id, request_id, allow, always } => {
+            permission(bridge, cfg, client, &session_id, &request_id, allow, always).await
         }
         Command::History { .. } => unreachable!("history обработан выше"),
     };
@@ -163,14 +163,17 @@ async fn permission(
     session: &str,
     request_id: &str,
     allow: bool,
+    always: bool,
 ) -> Outcome {
     let sid = resolve_session_id(bridge.registry(), session)?;
     if is_hook_request(request_id) {
         // Запрос hook'а `PermissionRequest` (сессия IDE без Channel): вердикт файлом, ответит hook.
-        answer_hook_request(&sid, request_id, allow)?;
+        answer_hook_request(&sid, request_id, allow, always)?;
         bridge.clear_pending_permission(&sid);
         return Ok((Some("hook"), None));
     }
+    // У запросов Channel нет правил для запоминания: молча разрешить без «всегда» было бы неправдой.
+    anyhow::ensure!(!always, "«разрешать всегда» доступно только для запросов hook'а");
     let rec = bridge.registry().get(&sid).context("сессия пропала из реестра")?;
     let port = rec.channel_port.context("у сессии нет Channel (запусти claude-pet)")?;
     let token = channel_token_for(rec, &cfg.channel_token);

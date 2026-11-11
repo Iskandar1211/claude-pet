@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let onboarding = OnboardingController()
     private let usageBadge = UsageBadge()
     private let usageItem = NSMenuItem(title: "", action: #selector(refreshUsage), keyEquivalent: "")
+    private let summaryItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private var lastSessions: [BridgeSession] = []
     private var petStatusResolver = PetStatusResolver()
     private var resolvedPetStatus: PetStatus?
@@ -169,6 +170,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         usageItem.target = self
         menu.addItem(usageItem)
         usageItem.title = UsageStore.describe(UsageStore.load())
+        summaryItem.isEnabled = false
+        summaryItem.isHidden = true
+        menu.addItem(summaryItem)
 
         let characterMenu = NSMenu()
         for character in PetCharacter.allCases {
@@ -211,6 +215,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Строка про лимит в меню — по свежим данным в момент открытия.
     func menuWillOpen(_ menu: NSMenu) {
         usageItem.title = UsageStore.describe(UsageStore.load())
+        refreshSummary()
+    }
+
+    /// «Сегодня: 3 сессии · 12 задач · 1 ч 30 мин» — мост читает events.jsonl за миллисекунды.
+    private func refreshSummary() {
+        let since = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        let (ok, output) = HooksInstaller.runBridge(["summary", "--since", String(since)])
+        guard ok, let data = output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = json["sessions"] as? Int,
+              let tasks = json["tasks"] as? Int,
+              let seconds = json["work_seconds"] as? Int else {
+            NSLog("ClaudePet: сводка дня недоступна: %@", output)
+            summaryItem.isHidden = true
+            return
+        }
+        var text: String
+        if sessions == 0 && tasks == 0 && seconds < 60 {
+            text = "Сегодня: пока ничего"
+        } else {
+            let minutes = seconds / 60
+            let time = minutes < 60 ? "\(minutes) мин" : "\(minutes / 60) ч \(minutes % 60) мин"
+            text = "Сегодня: \(Self.plural(sessions, "сессия", "сессии", "сессий")) · "
+                + "\(Self.plural(tasks, "задача", "задачи", "задач")) · \(time)"
+        }
+        if json["partial"] as? Bool == true { text += " (неполные данные)" }
+        summaryItem.title = text
+        summaryItem.isHidden = false
+    }
+
+    private static func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
+        let form = n % 100 / 10 == 1 ? many : (n % 10 == 1 ? one : (2...4 ~= n % 10 ? few : many))
+        return "\(n) \(form)"
     }
 
     @objc private func refreshUsage() {

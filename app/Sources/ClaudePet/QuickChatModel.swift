@@ -215,12 +215,12 @@ final class QuickChatModel {
 
     /// `requestId` берём из карточки, которую видел пользователь: одобряем именно показанный запрос,
     /// а не тот, что оказался «текущим» к моменту клика.
-    func answerPermission(requestId: String, allow: Bool) {
+    func answerPermission(requestId: String, allow: Bool, always: Bool = false) {
         guard let session = selected, !permissionBusy else { return }
         permissionBusy = true
         permissionError = nil
         Task {
-            let result = await bridge.send(.permission(sessionId: session.id, requestId: requestId, allow: allow))
+            let result = await bridge.send(.permission(sessionId: session.id, requestId: requestId, allow: allow, always: always))
             permissionBusy = false
             if case .failure(let error) = result {
                 permissionError = error.message

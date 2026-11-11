@@ -27,7 +27,7 @@ final class BridgeClient {
     /// Команда приложения → мосту (bridge/PROTOCOL.md).
     enum Command {
         case send(sessionId: String, text: String)
-        case permission(sessionId: String, requestId: String, allow: Bool)
+        case permission(sessionId: String, requestId: String, allow: Bool, always: Bool = false)
         case history(sessionId: String, limit: Int)
     }
 
@@ -235,10 +235,12 @@ final class BridgeClient {
         var text: String?
         var requestId: String?
         var allow: Bool?
+        /// Шлём только `true`: старый мост поле не знает.
+        var always: Bool?
         var limit: Int?
 
         enum CodingKeys: String, CodingKey {
-            case id, cmd, text, allow, limit
+            case id, cmd, text, allow, always, limit
             case sessionId = "session_id"
             case requestId = "request_id"
         }
@@ -248,8 +250,9 @@ final class BridgeClient {
             switch command {
             case .send(let sessionId, let text):
                 (cmd, self.sessionId, self.text) = ("send", sessionId, text)
-            case .permission(let sessionId, let requestId, let allow):
+            case .permission(let sessionId, let requestId, let allow, let always):
                 (cmd, self.sessionId, self.requestId, self.allow) = ("permission", sessionId, requestId, allow)
+                self.always = always ? true : nil
             case .history(let sessionId, let limit):
                 (cmd, self.sessionId, self.limit) = ("history", sessionId, limit)
             }

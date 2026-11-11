@@ -7,12 +7,31 @@ struct BridgeSession: Decodable, Equatable, Identifiable, Sendable {
         let toolName: String
         /// Недоверенный текст из сессии — показывать только как обычный текст.
         let inputPreview: String
+        /// Что запомнит «Разрешать всегда»; пусто — кнопки нет (Channel, старый мост, нет предложений Claude Code).
+        let remember: [RememberRule]
 
         enum CodingKeys: String, CodingKey {
             case requestId = "request_id"
             case toolName = "tool_name"
             case inputPreview = "input_preview"
+            case remember
         }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            requestId = try c.decode(String.self, forKey: .requestId)
+            toolName = try c.decode(String.self, forKey: .toolName)
+            inputPreview = try c.decode(String.self, forKey: .inputPreview)
+            remember = try c.decodeIfPresent([RememberRule].self, forKey: .remember) ?? []
+        }
+    }
+
+    /// Правка прав, которую предложил Claude Code. Недоверенный текст — показывать только через `UntrustedText`.
+    struct RememberRule: Decodable, Equatable, Sendable {
+        /// `Tool(ruleContent)` или `Tool`.
+        let rules: [String]
+        /// `session` | `localSettings` | `projectSettings` | `userSettings`; другое значение — не показываем кнопку.
+        let destination: String
     }
 
     let sessionId: String

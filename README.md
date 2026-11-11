@@ -104,7 +104,7 @@ Before every change to `settings.json` the previous file is saved to `~/.claude-
 - Everything is local: no network ports are opened by the app; the optional Channel listens on `127.0.0.1` only, on a random port, guarded by a per-process token.
 - Microphone and speech recognition access is asked once. The app's signature is tied to its bundle id (`local.claude-code-pet`) rather than to the binary hash, so a rebuild keeps the permission — and, like the tokens below, any app you build with that id gets it too.
 - Tokens that let the pet send messages and approvals into your sessions live in `~/.claude-pet/` (mode `700`/`600`). **Any process running as your user can read them**, so it could send messages to your Claude sessions — the same trust level as your other dotfiles.
-- Conversation text from transcripts is untrusted: links and images are stripped, and the approval card shows the full command. If a preview is incomplete, **Разрешить** (Allow) is disabled and you answer in the terminal.
+- Conversation text from transcripts is untrusted: links and images are stripped, and the approval card shows the full command. If a preview is incomplete, **Разрешить** (Allow) is disabled and you answer in the terminal. In the VS Code / Cursor extension a third button, **Разрешать всегда** (Always allow), appears when Claude Code itself suggests a permission rule; the rule and where it will be saved (this session, this project, or all projects) are shown above the buttons before you click.
 - Backups in `~/.claude-pet/backups/` are copies of your `settings.json` and may contain secrets from its `env` section; delete them if you rotate keys.
 
 ## Uninstall
