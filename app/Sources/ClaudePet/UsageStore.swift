@@ -70,7 +70,8 @@ enum UsageStore {
         switch seconds {
         case ..<60: return "только что"
         case ..<3600: return "\(seconds / 60) мин назад"
-        default: return "\(seconds / 3600) ч назад"
+        case ..<86400: return "\(seconds / 3600) ч назад"
+        default: return "\(seconds / 86400) дн. назад"
         }
     }
 

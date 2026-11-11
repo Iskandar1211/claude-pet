@@ -101,7 +101,8 @@ struct QuickChatView: View {
 
     @ViewBuilder
     private func approval(for session: BridgeSession) -> some View {
-        if let pending = session.pendingPermission, session.hasChannel {
+        // Запрос приходит через Channel или через hook PermissionRequest (сессии из IDE) — ответить можно на оба.
+        if let pending = session.pendingPermission {
             VStack(alignment: .leading, spacing: 6) {
                 Text(verbatim: "Просит разрешение: \(UntrustedText.clean(pending.toolName, limit: 60))")
                     .font(.callout.weight(.semibold))

@@ -118,10 +118,11 @@ final class UsageBadge: NSView {
                 : "\(Int(pct.rounded()))%"
         }
         let age = UsageStore.ageText(from: usage.updatedAt, now: now)
+        let staleNote = stale ? " — лимит обновляют только сессии в терминале" : ""
         let hint = "Клик — перечитать. Данные приходят из терминала Claude."
         toolTip = expired
             ? "Лимит неизвестен: окно сброшено в \(usage.resetsAt.formatted(date: .omitted, time: .shortened)). Отправь запрос в терминале Claude — данные обновятся. \(hint)"
-            : "Лимит Claude за 5 часов: \(Int(pct.rounded()))% (обновлено \(age)). \(hint)"
+            : "Лимит Claude за 5 часов: \(Int(pct.rounded()))% (обновлено \(age)\(staleNote)). \(hint)"
 
         setVisible(true)
         layoutInChrome()

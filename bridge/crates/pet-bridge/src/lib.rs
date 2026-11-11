@@ -9,6 +9,7 @@ pub mod launcher;
 mod liveness;
 mod paths;
 mod pending;
+pub mod permission_hook;
 pub mod protocol;
 mod registry;
 mod state;

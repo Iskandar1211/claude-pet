@@ -40,22 +40,39 @@ Everything runs locally. The app only talks to Claude Code on your machine.
 
 ## Requirements
 
-- macOS 14 or later (voice input: macOS 26 or later)
+- macOS 15 or later (voice input: macOS 26 or later)
 - [Claude Code](https://code.claude.com)
-- Xcode Command Line Tools — `xcode-select --install` (full Xcode is **not** needed)
-- Rust — `curl https://sh.rustup.rs -sSf | sh` or `brew install rust`
-- `jq` — built into macOS 15+; on macOS 14 `brew install jq`
-- [Bun](https://bun.sh) — *optional*, needed only for replies and approvals from the pet chat (Channel)
+
+That's all for the prebuilt app. Building from source needs more — see [Build from source](#build-from-source).
 
 ## Install
 
 ```bash
-git clone https://github.com/Iskandar1211/claude-pet.git
-cd claude-pet
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/Iskandar1211/claude-pet/main/install.sh | bash
 ```
 
-`install.sh` checks the requirements, builds the app and puts it in `~/Applications/Claude Pet.app`. The first build downloads Rust crates and takes a few minutes. You build it yourself, so macOS doesn't block it as a downloaded app.
+The script downloads the prebuilt app for your Mac (Apple Silicon or Intel) from the [latest release](https://github.com/Iskandar1211/claude-pet/releases/latest), verifies its SHA-256 checksum (the install is aborted if it doesn't match), puts it in `~/Applications/Claude Pet.app` and opens it. No `sudo` is used. To update, run the same command again.
+
+The app is **ad-hoc signed and not notarized** (there is no Apple Developer ID behind it). Files downloaded with `curl` don't get the quarantine flag, so macOS doesn't block the app; if you download the zip from the Releases page in a browser instead, Gatekeeper will complain and you'd have to allow it manually.
+
+### Build from source
+
+Needs Xcode Command Line Tools, Rust and `jq`; [Bun](https://bun.sh) is optional (only for replies and approvals from the pet chat — Channel).
+
+- Xcode Command Line Tools — `xcode-select --install` (full Xcode is **not** needed)
+- Rust — `curl https://sh.rustup.rs -sSf | sh` or `brew install rust`
+- `jq` — built into macOS 15+; on macOS 14 `brew install jq` (building from source is the way to run the pet on macOS 14)
+- [Bun](https://bun.sh) — *optional*, builds Channel into the app
+
+```bash
+git clone https://github.com/Iskandar1211/claude-pet.git
+cd claude-pet
+./build-from-source.sh
+```
+
+`build-from-source.sh` checks the requirements, builds the app and puts it in `~/Applications/Claude Pet.app`. The first build downloads Rust crates and takes a few minutes. You build it yourself, so macOS doesn't block it as a downloaded app.
+
+### First launch
 
 On first launch a welcome window offers two steps:
 
@@ -92,8 +109,10 @@ Before every change to `settings.json` the previous file is saved to `~/.claude-
 ## Uninstall
 
 ```bash
-./uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/Iskandar1211/claude-pet/main/uninstall.sh | bash
 ```
+
+or `./uninstall.sh` from a clone of the repository.
 
 ## How it works
 

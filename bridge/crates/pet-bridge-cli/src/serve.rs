@@ -17,6 +17,11 @@ use pet_bridge::{
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub async fn run() -> Result<()> {
+    // Признак для hook'а `PermissionRequest`: питомец запущен. Файл убирается при выходе из run.
+    // Без него не работают только кнопки для сессий IDE — serve из-за этого не роняем.
+    let _pid_file = pet_bridge::permission_hook::ServePidFile::create()
+        .inspect_err(|e| tracing::warn!("serve.pid: {e:#}"))
+        .ok();
     emit(&Event::Hello { protocol: PROTOCOL_VERSION })?;
     let mut last_usage: Option<Usage> = None;
     publish_usage_if_changed(&mut last_usage)?;

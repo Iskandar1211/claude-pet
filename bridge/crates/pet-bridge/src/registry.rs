@@ -11,6 +11,7 @@ use crate::hook_event::HookEvent;
 use crate::liveness::{process_alive, session_alive};
 use crate::paths::{channels_dir, pending_dir, pid_from_socket, tokens_dir};
 use crate::pending::{clear_pending_file, load_pending, save_pending};
+use crate::permission_hook::{hook_request_pid, is_hook_request};
 use crate::state::{apply_hook_event, apply_transcript_signal, PendingPermission, SessionStatus};
 use crate::transcript::{one_line, parse_transcript_line};
 
@@ -194,7 +195,8 @@ impl SessionRegistry {
             ev.notification_type.as_deref(),
             ev.notification.as_deref(),
         );
-        if entry.status == SessionStatus::Working {
+        let pending = load_pending(&ev.session_id);
+        if pending_cleared_by(&ev.event, entry.status, pending.as_ref()) {
             entry.pending_permission = None;
             clear_pending_file(&ev.session_id);
         }
@@ -247,6 +249,11 @@ impl SessionRegistry {
                 .unwrap_or_default()
                 .to_string();
             if let Some(perm) = load_pending(&sid) {
+                // Claude Code завершил hook (ответ в IDE) — убрать за ним некому, кроме нас.
+                if hook_request_pid(&perm.request_id).is_some_and(|pid| !process_alive(pid)) {
+                    clear_pending_file(&sid);
+                    continue;
+                }
                 if let Some(rec) = self.sessions.get_mut(&sid) {
                     rec.pending_permission = Some(perm);
                     rec.status = SessionStatus::WaitingPermission;
@@ -379,6 +386,10 @@ impl SessionRegistry {
             let line = String::from_utf8_lossy(&buf[..buf.len() - 1]);
             rec.status =
                 apply_transcript_signal(rec.status, &line, line_end_offset, file_len_at_tail);
+            if rec.status == SessionStatus::Done && rec.pending_permission.as_ref().is_some_and(|p| is_hook_request(&p.request_id)) {
+                rec.pending_permission = None;
+                clear_pending_file(id);
+            }
             if let Some(chat) = parse_transcript_line(&line) {
                 rec.last_message = Some(format!("{}: {}", chat.role, chat.preview));
             }
@@ -394,6 +405,19 @@ impl SessionRegistry {
                 _ => true,
             }
         });
+    }
+}
+
+/// Снимает ли событие hook'а pending сессии. Переход в Working снимает любой pending, кроме
+/// pending hook'а `PermissionRequest` на PreToolUse: Claude Code пишет PreToolUse того же
+/// инструмента раньше, чем запускает hook, а serve может прочитать его уже после записи pending.
+/// Ход завершён (Stop) — ждать разрешения нечего, pending hook'а тоже снимаем.
+fn pending_cleared_by(event: &str, status: SessionStatus, pending: Option<&PendingPermission>) -> bool {
+    let from_hook = pending.is_some_and(|p| is_hook_request(&p.request_id));
+    match status {
+        SessionStatus::Working => !(from_hook && event == "PreToolUse"),
+        SessionStatus::Done => from_hook && event == "Stop",
+        _ => false,
     }
 }
 
@@ -502,6 +526,22 @@ impl SessionRegistry {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn hook_pending_survives_pre_tool_use_only() {
+        let hook = PendingPermission { request_id: "hook-1-2".into(), ..Default::default() };
+        let channel = PendingPermission { request_id: "abcde".into(), ..Default::default() };
+        let working = SessionStatus::Working;
+        assert!(!pending_cleared_by("PreToolUse", working, Some(&hook)));
+        assert!(pending_cleared_by("PostToolUse", working, Some(&hook)));
+        assert!(pending_cleared_by("UserPromptSubmit", working, Some(&hook)));
+        assert!(pending_cleared_by("PreToolUse", working, Some(&channel)));
+        assert!(pending_cleared_by("PreToolUse", working, None));
+        assert!(pending_cleared_by("Stop", SessionStatus::Done, Some(&hook)));
+        assert!(!pending_cleared_by("Notification", SessionStatus::Done, Some(&hook)));
+        assert!(!pending_cleared_by("Stop", SessionStatus::Done, Some(&channel)));
+        assert!(!pending_cleared_by("Notification", SessionStatus::WaitingPermission, Some(&hook)));
+    }
 
     fn session_start_line(session_id: &str) -> String {
         format!(

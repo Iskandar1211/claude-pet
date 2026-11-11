@@ -40,6 +40,11 @@ enum Commands {
         /// Абсолютный путь к pet-channel (для install и refresh)
         channel: Option<std::path::PathBuf>,
     },
+    /// Hook Claude Code: `hook permission` — событие PermissionRequest (ответ из питомца для сессий IDE)
+    Hook {
+        #[arg(value_parser = ["permission"])]
+        event: String,
+    },
     /// Протокол для Swift-приложения: JSON-строки в stdout/stdin (bridge/PROTOCOL.md)
     Serve,
     /// Вердикт для pending permission (только Channel)
@@ -78,6 +83,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Serve => serve::run().await?,
+        Commands::Hook { .. } => hook_permission(),
         Commands::Hooks { action } => hooks(&action)?,
         Commands::Launcher { action, channel } => launcher(&action, channel)?,
         Commands::Send { session, text } => {
@@ -167,6 +173,23 @@ fn status_label(s: SessionStatus) -> &'static str {
         SessionStatus::WaitingPermission => "waiting",
         SessionStatus::Done => "done",
     }
+}
+
+/// Всегда код 0: решение — строка в stdout, без неё Claude Code показывает обычный диалог.
+fn hook_permission() {
+    use std::io::{Read, Write};
+    use pet_bridge::permission_hook::{run_permission_hook, HookPaths, WaitLimits};
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        return;
+    }
+    let entrypoint = std::env::var("CLAUDE_CODE_ENTRYPOINT").ok();
+    let Some(line) = run_permission_hook(&input, entrypoint.as_deref(), &HookPaths::user(), WaitLimits::default())
+    else {
+        return;
+    };
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}").and_then(|()| out.flush());
 }
 
 /// Скрипт hook'а вшит в бинарник — установленная версия совпадает с репозиторием.
