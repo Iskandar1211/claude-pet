@@ -53,6 +53,7 @@ struct ApprovalBubbleView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(ChatTheme.panelBorder))
             .environment(\.colorScheme, .dark)
+            .foregroundStyle(ChatTheme.text)
             .frame(width: Self.width)
         }
     }

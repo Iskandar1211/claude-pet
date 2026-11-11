@@ -28,6 +28,7 @@ struct QuickChatView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(ChatTheme.panelBorder))
         .environment(\.colorScheme, .dark)
+        .foregroundStyle(ChatTheme.text)
         .tint(ChatTheme.accent)
         .onAppear { inputFocused = true }
         .onChange(of: model.focusTick) { inputFocused = true }
@@ -149,7 +150,7 @@ struct QuickChatView: View {
                     .onSubmit { model.sendDraft() }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
-                    .background(ChatTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+                    .background(ChatTheme.inputBackground, in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(ChatTheme.surfaceBorder))
                 voiceButton
                 Button { model.sendDraft() } label: {
@@ -290,6 +291,7 @@ private struct MessageBubble: View {
                 .padding(.horizontal, 11)
                 .padding(.vertical, 7)
                 .background(ChatTheme.userBubble, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChatTheme.surfaceBorder))
                 .padding(.leading, 48)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
